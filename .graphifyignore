@@ -1,0 +1,23 @@
+# Project-brain + tooling meta, not product source
+memory/
+graphify-out/
+project-audit/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+.ohmyagent/
+.agents/
+
+# Build output
+dist/
+out/
+
+# User output: the notes you saved and the deleted-note copies. Not product source.
+Notes/
+
+# Secrets — never index them
+.env
+.env.example
+
+node_modules/

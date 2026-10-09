@@ -1,0 +1,20 @@
+node_modules/
+
+# Electron writes these when the app is launched from a terminal
+*.log
+
+# Build output
+dist/
+out/
+
+# User output: the notes you saved and the deleted-note copies
+Notes/
+
+# AI keys — never commit secrets (.env.example is the committed template)
+.env
+
+graphify-out/
+memory/
+.ohmyagent/
+.claude/
+project-audit/

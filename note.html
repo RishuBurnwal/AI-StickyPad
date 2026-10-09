@@ -1,0 +1,1197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sticky note</title>
+<style>
+  :root {
+    --bg: #ffe9a3;
+    --ink: #2c2a24;
+    --edge: rgba(0, 0, 0, .16);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    user-select: none;
+    cursor: default;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--edge);
+  }
+
+  /* ---- header ---------------------------------------------------------- */
+  header {
+    -webkit-app-region: drag;
+    flex: 0 0 26px;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 0 3px 0 8px;
+    background: rgba(0, 0, 0, .06);
+    border-bottom: 1px solid rgba(0, 0, 0, .07);
+  }
+  /* Sits left of the drag grip so it keeps the same spot on every note, clear
+     of the formatting cluster on the right. */
+  #add {
+    font-size: 15px;
+    font-weight: 700;
+    color: rgba(0, 0, 0, .45);
+  }
+  #add:hover { background: #2b6ee0; color: #fff; }
+  .grip { flex: 1 1 auto; height: 100%; min-width: 4px; }
+  header button {
+    -webkit-app-region: no-drag;
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: rgba(0, 0, 0, .52);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  header button:hover { background: rgba(0, 0, 0, .12); color: rgba(0, 0, 0, .85); }
+  header button.on { color: #1c60c8; background: rgba(28, 96, 200, .16); }
+  header button.danger { color: #fff; background: #d0342c; }
+  #bold { font-weight: 800; font-family: Georgia, serif; }
+
+  /* ---- popovers -------------------------------------------------------- */
+  .pop {
+    -webkit-app-region: no-drag;
+    position: absolute;
+    top: 27px;
+    right: 4px;
+    display: none;
+    flex-direction: column;
+    gap: 7px;
+    padding: 8px 9px;
+    background: rgba(255, 255, 255, .97);
+    border: 1px solid rgba(0, 0, 0, .18);
+    border-radius: 9px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, .26);
+    z-index: 9;
+    color: #222;
+    max-width: calc(100vw - 12px);
+  }
+  .pop.open { display: flex; }
+  .pop .row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+  .pop .lbl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #777;
+  }
+  .swatch {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, .25);
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .swatch:hover { transform: scale(1.16); }
+  .swatch.none {
+    background: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+  .swatch.none::after {
+    content: "";
+    position: absolute; left: 50%; top: -3px; bottom: -3px;
+    width: 1.5px; background: #d0342c; transform: rotate(45deg);
+  }
+  .pop .mini {
+    height: 22px;
+    min-width: 26px;
+    padding: 0 7px;
+    border: 1px solid rgba(0, 0, 0, .2);
+    border-radius: 5px;
+    background: #fff;
+    color: #333;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .pop .mini:hover { background: #eef1f5; }
+  .pop .mini.i { font-style: italic; font-family: Georgia, serif; }
+  .pop .mini.u { text-decoration: underline; }
+  .pop .mini.s { text-decoration: line-through; }
+
+  /* ---- title ------------------------------------------------------------ */
+  /* Sits between the header and the text so the note reads as a titled note
+     rather than a page of loose typing. */
+  #titlebar {
+    flex: 0 0 auto;
+    padding: 5px 11px 4px;
+    background: rgba(0, 0, 0, .035);
+    border-bottom: 1px solid rgba(0, 0, 0, .07);
+  }
+  #title {
+    -webkit-app-region: no-drag;
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.3;
+    user-select: text;
+    cursor: text;
+  }
+  #title::placeholder { color: rgba(0, 0, 0, .28); font-weight: 600; }
+
+  /* ---- AI prompt picker -------------------------------------------------- */
+  #ai-pop {
+    position: absolute;
+    z-index: 40;
+    top: 28px;
+    right: 4px;
+    width: min(300px, calc(100% - 12px));
+    max-height: calc(100% - 44px);
+    overflow: auto;
+    background: rgba(30, 30, 34, .98);
+    border: 1px solid rgba(255, 255, 255, .16);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+    padding: 6px;
+    user-select: none;
+  }
+  #ai-pop .pop-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 2px 6px 6px;
+  }
+  #ai-pop .pop-title {
+    flex: 1;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: rgba(255, 255, 255, .45);
+    font-weight: 700;
+  }
+  #ai-pop-close {
+    width: 22px; height: 20px;
+    border: none; border-radius: 5px;
+    background: transparent;
+    color: rgba(255, 255, 255, .55);
+    font-size: 12px; cursor: pointer;
+    line-height: 1;
+  }
+  #ai-pop-close:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+  .ai-folder-lbl {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: rgba(255, 255, 255, .35);
+    padding: 6px 6px 2px;
+    font-weight: 700;
+  }
+  .ai-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: #fff;
+    font-size: 12px;
+    padding: 7px 8px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .ai-item:hover { background: rgba(242, 193, 78, .18); }
+  .ai-item .sub { display: block; font-size: 10px; color: rgba(255, 255, 255, .4); margin-top: 1px; }
+  .ai-custom { border-top: 1px solid rgba(255, 255, 255, .1); margin-top: 4px; color: #ffd97a; font-weight: 600; }
+  #ai-custom-box { padding: 6px 4px 4px; }
+  #ai-custom-text {
+    width: 100%;
+    min-height: 64px;
+    border: 1px solid rgba(255, 255, 255, .2);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, .08);
+    color: #fff;
+    font-size: 12px;
+    padding: 6px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  #ai-custom-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .mini-btn {
+    flex: 1 1 auto;
+    margin-top: 0;
+    border: 1px solid rgba(242, 193, 78, .7);
+    background: rgba(242, 193, 78, .16);
+    color: #ffd97a;
+    border-radius: 6px;
+    font-size: 12px; font-weight: 700;
+    padding: 7px 10px;
+    cursor: pointer;
+  }
+  #ai-custom-hint {
+    flex: 0 0 auto;
+    font-size: 9px;
+    color: rgba(255, 255, 255, .4);
+    line-height: 1.3;
+  }
+  .mini-btn:hover { background: rgba(242, 193, 78, .3); }
+  #ai-status {
+    font-size: 10px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, .7);
+    padding: 2px 6px;
+    min-height: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #ai-status.err { color: #ff8a8a; }
+  #ai-status.ok { color: #7ec97e; }
+
+  /* ---- save toast ------------------------------------------------------- */
+  #toast {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 12;
+    padding: 6px 9px;
+    border-radius: 6px;
+    background: rgba(20, 22, 26, .93);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.35;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .3);
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity .16s ease, transform .16s ease;
+    pointer-events: none;
+    word-break: break-word;
+  }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.bad { background: rgba(150, 26, 20, .95); }
+
+  /* ---- body ------------------------------------------------------------ */
+  /* Notepad++-style gutter: numbers live outside the editor so they never
+     join a text selection. pointer-events:none so clicks fall through. */
+  #editor {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+    width: 100%;
+  }
+  #gutter {
+    flex: 0 0 auto;
+    width: 2.75em;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: none;
+    background: rgba(0, 0, 0, .045);
+    border-right: 1px solid rgba(0, 0, 0, .08);
+    color: rgba(0, 0, 0, .38);
+    font-variant-numeric: tabular-nums;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    position: relative;
+  }
+  #gutter-inner { position: absolute; left: 0; right: 0; top: 0; }
+  #gutter .ln {
+    position: absolute;
+    right: 4px;
+    left: 0;
+    padding: 0 4px 0 0;
+    margin: 0;
+    text-align: right;
+    white-space: nowrap;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    font-weight: inherit;
+  }
+  #text {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    overflow-y: auto;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 14px;
+    line-height: 1.45;
+    padding: 9px 11px 12px 8px;
+    user-select: text;
+    cursor: text;
+    word-wrap: break-word;
+  }
+  #text:empty::before {
+    content: attr(data-placeholder);
+    color: rgba(0, 0, 0, .35);
+    pointer-events: none;
+  }
+  #text img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 5px;
+    display: block;
+    margin: 5px 0;
+    cursor: zoom-in;
+  }
+  #text::-webkit-scrollbar { width: 8px; }
+  #text::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, .2); border-radius: 4px; }
+  body.dropping #text { box-shadow: inset 0 0 0 2px #2b6ee0; }
+
+  /* ---- per-note timer -------------------------------------------------- */
+  /* 32px tall but only the top 26px holds controls: the bottom strip and the
+     right-hand gutter are left clear so the resize grips stay grabbable. */
+  #tstrip {
+    display: none;
+    flex: 0 0 32px;
+    align-items: center;
+    gap: 3px;
+    height: 32px;
+    padding: 0 20px 6px 7px;
+    background: rgba(0, 0, 0, .08);
+    border-top: 1px solid rgba(0, 0, 0, .1);
+    z-index: 6;
+  }
+  #tstrip.show { display: flex; }
+  #tstrip.done { background: rgba(208, 52, 44, .22); }
+
+  #tclock {
+    -webkit-app-region: no-drag;
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 4px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #tclock:hover { background: rgba(0, 0, 0, .12); }
+  #tclock.running { color: #14733a; font-weight: 600; }
+  #tclock.done { color: #a81a12; font-weight: 700; animation: pulse .7s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }
+
+  #tedit {
+    -webkit-app-region: no-drag;
+    display: none;
+    width: 52px;
+    height: 22px;
+    text-align: center;
+    border: 1px solid rgba(0, 0, 0, .35);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, .85);
+    color: #222;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+  }
+
+  #tstrip button {
+    -webkit-app-region: no-drag;
+    flex: 0 0 auto;
+    height: 22px;
+    min-width: 22px;
+    padding: 0 4px;
+    border: 1px solid rgba(0, 0, 0, .18);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, .5);
+    color: rgba(0, 0, 0, .7);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #tstrip button:hover { background: rgba(255, 255, 255, .9); }
+  .tspring { flex: 1 1 auto; min-width: 0; }
+  /* The note window is the viewport, so this is really "if the note is wide
+     enough, show the one-click presets". */
+  .chip { display: none; }
+  @media (min-width: 284px) { .chip { display: inline-block; } }
+
+  /* ---- resize grips ---------------------------------------------------- */
+  .rs { position: fixed; z-index: 8; -webkit-app-region: no-drag; }
+  .rs.e  { top: 0; right: 0; width: 6px; height: 100%; cursor: ew-resize; }
+  .rs.w  { top: 0; left: 0; width: 6px; height: 100%; cursor: ew-resize; }
+  .rs.s  { bottom: 0; left: 0; height: 5px; width: 100%; cursor: ns-resize; }
+  .rs.n  { top: 0; left: 0; height: 3px; width: 100%; cursor: ns-resize; }
+  .rs.se { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+  .rs.sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+  .rs.se::after {
+    content: "";
+    position: absolute; right: 3px; bottom: 3px;
+    width: 7px; height: 7px;
+    border-right: 2px solid rgba(0, 0, 0, .32);
+    border-bottom: 2px solid rgba(0, 0, 0, .32);
+  }
+</style>
+</head>
+<body>
+  <header>
+    <button id="add" title="New note (Ctrl+Alt+M)">＋</button>
+    <span class="grip"></span>
+    <button id="bold" title="Bold (Ctrl+B)">B</button>
+    <button id="format" title="Formatting &amp; highlight">Aa</button>
+    <button id="image" title="Add a picture (or just paste one)">🖼</button>
+    <button id="colors" title="Note colour">◍</button>
+    <button id="timer" title="Add a timer to this note">⏱</button>
+    <button id="save" title="Save a copy (PDF, Markdown, JSON, HTML, text)">💾</button>
+    <button id="ai" title="AI actions — run a saved prompt on this note">✦</button>
+    <button id="undo" title="Undo AI change" disabled>↶</button>
+    <button id="redo" title="Redo AI change" disabled>↷</button>
+    <button id="pin" title="Keep on top of other windows">📌</button>
+    <button id="close" title="Delete note">✕</button>
+  </header>
+
+  <div id="titlebar">
+    <input id="title" type="text" placeholder="Untitled" maxlength="200"
+           title="Name this note — the saved file is named after it" />
+  </div>
+
+  <!-- AI prompt picker: saved skills from the bar's AI window + custom -->
+  <div id="ai-pop" hidden>
+    <div class="pop-head">
+      <div class="pop-title">AI actions</div>
+      <button id="ai-pop-close" type="button" title="Close">✕</button>
+    </div>
+    <div id="ai-list"></div>
+    <button id="ai-custom" class="ai-item ai-custom">Custom prompt…</button>
+    <div id="ai-custom-box" hidden>
+      <textarea id="ai-custom-text" rows="4" placeholder="Type any instruction for this note…"></textarea>
+      <div id="ai-custom-actions">
+        <button id="ai-custom-run" class="mini-btn" type="button">Send</button>
+        <span id="ai-custom-hint">Enter send<br>Ctrl+Enter line</span>
+      </div>
+    </div>
+    <div id="ai-status"></div>
+  </div>
+
+  <div class="pop" id="palette"><div class="row" id="paletteRow"></div></div>
+
+  <div class="pop" id="formatPop">
+    <div class="row">
+      <span class="lbl">Text</span>
+      <button class="mini" data-cmd="bold" style="font-weight:800">B</button>
+      <button class="mini i" data-cmd="italic">I</button>
+      <button class="mini u" data-cmd="underline">U</button>
+      <button class="mini s" data-cmd="strikeThrough">S</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Highlight</span>
+      <span id="hiliteRow" style="display:flex;gap:5px;flex-wrap:wrap"></span>
+    </div>
+    <div class="row">
+      <span class="lbl">Size</span>
+      <button class="mini" id="smaller">A−</button>
+      <button class="mini" id="bigger">A+</button>
+      <button class="mini" id="clearFmt" title="Remove all formatting from the selection">Clear</button>
+    </div>
+  </div>
+
+  <div id="editor">
+    <div id="gutter" aria-hidden="true"><div id="gutter-inner"></div></div>
+    <div id="text" contenteditable="true" spellcheck="true" data-placeholder="Type here…"></div>
+  </div>
+
+  <div id="tstrip">
+    <span id="tclock" title="Click to choose a duration">25:00</span>
+    <input id="tedit" type="text" inputmode="numeric" />
+    <button class="chip" data-min="5" title="5 minutes">5</button>
+    <button class="chip" data-min="15" title="15 minutes">15</button>
+    <button class="chip" data-min="25" title="25 minutes">25</button>
+    <span class="tspring"></span>
+    <button id="tplay" title="Start / pause">▶</button>
+    <button id="treset" title="Reset">↺</button>
+    <button id="tremove" title="Remove timer">✕</button>
+  </div>
+
+  <div id="toast"></div>
+
+  <div class="rs n" data-edge="n"></div>
+  <div class="rs w" data-edge="w"></div>
+  <div class="rs e" data-edge="e"></div>
+  <div class="rs s" data-edge="s"></div>
+  <div class="rs sw" data-edge="sw"></div>
+  <div class="rs se" data-edge="se"></div>
+
+<script src="timer-core.js"></script>
+<script>
+(async () => {
+  const { data, palette } = await window.api.invoke('note:init');
+  const $ = (id) => document.getElementById(id);
+  const text = $('text');
+  const gutter = $('gutter');
+  const gutterInner = $('gutter-inner');
+
+  /**
+   * Notepad++ gutter: one number per block (div / li / heading / img / br),
+   * pinned to that block's offsetTop so wrapped lines keep a single number
+   * and images don't throw the column off. Numbers are outside #text so they
+   * cannot join a selection.
+   */
+  function lineBlocks() {
+    const lines = [];
+    const add = (el) => { if (el) lines.push(el); };
+    for (const node of text.childNodes) {
+      if (node.nodeType === 3) {
+        if (node.textContent && node.textContent.replace(/\u00a0/g, ' ').trim() !== '') add(text);
+        continue;
+      }
+      if (node.nodeType !== 1) continue;
+      const tag = node.tagName;
+      if (tag === 'UL' || tag === 'OL') {
+        node.querySelectorAll(':scope > li').forEach(add);
+      } else {
+        add(node);
+      }
+    }
+    return lines;
+  }
+
+  function firstLineRect(el) {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const rects = range.getClientRects();
+      if (rects.length) return rects[0];
+    } catch (err) { /* fall through */ }
+    return el.getBoundingClientRect();
+  }
+
+  function refreshGutter() {
+    if (!gutter || !gutterInner) return;
+    const cs = getComputedStyle(text);
+    gutter.style.fontFamily = cs.fontFamily;
+    gutter.style.fontSize = cs.fontSize;
+    gutter.style.lineHeight = cs.lineHeight;
+    gutter.style.fontWeight = cs.fontWeight;
+
+    const lines = lineBlocks();
+    const n = Math.max(1, lines.length);
+    gutter.style.width = `${String(n).length + 1.55}em`;
+    gutterInner.style.height = `${Math.max(text.scrollHeight, text.clientHeight)}px`;
+    gutterInner.style.transform = '';
+
+    while (gutterInner.childElementCount > n) gutterInner.removeChild(gutterInner.lastChild);
+    while (gutterInner.childElementCount < n) {
+      const span = document.createElement('span');
+      span.className = 'ln';
+      gutterInner.appendChild(span);
+    }
+    const gRect = gutter.getBoundingClientRect();
+    const textPad = parseFloat(cs.paddingTop) || 9;
+    const linePx = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 14) * 1.45;
+    for (let i = 0; i < n; i++) {
+      const span = gutterInner.children[i];
+      span.textContent = String(i + 1);
+      const el = lines[i];
+      let top = textPad;
+      let size = cs.fontSize;
+      let lh = cs.lineHeight;
+      let fam = cs.fontFamily;
+      if (el && el !== text && text.contains(el)) {
+        const elCs = getComputedStyle(el);
+        size = elCs.fontSize;
+        fam = elCs.fontFamily;
+        const box = firstLineRect(el);
+        top = box.top - gRect.top;
+        lh = `${Math.max(1, box.height)}px`;
+      } else if (i > 0) {
+        top = textPad + i * linePx;
+      }
+      span.style.top = `${Math.round(top)}px`;
+      span.style.fontSize = size;
+      span.style.lineHeight = lh;
+      span.style.height = (typeof lh === 'string' && lh.endsWith('px')) ? lh : `${linePx}px`;
+      span.style.fontFamily = fam;
+    }
+  }
+
+  const state = { ...data };
+  const HILITES = ['#ffe066', '#b2f2bb', '#ffc9c9', '#a5d8ff', '#eebefa', '#ffd8a8'];
+
+  // Rich text is produced by execCommand, which is deprecated on paper but is
+  // still the only thing in Chromium that edits a selection in place.
+  document.execCommand('styleWithCSS', false, true);
+
+  function applyColor(hex) {
+    document.documentElement.style.setProperty('--bg', hex);
+    const lum = (parseInt(hex.slice(1, 3), 16) * 0.299
+               + parseInt(hex.slice(3, 5), 16) * 0.587
+               + parseInt(hex.slice(5, 7), 16) * 0.114) / 255;
+    document.documentElement.style.setProperty('--ink', lum > 0.55 ? '#2c2a24' : '#f6f6f4');
+  }
+
+  function patch(p) {
+    Object.assign(state, p);
+    window.api.send('note:patch', p);
+  }
+
+  /**
+   * Content is ours, but a note can also receive dragged-in HTML, so strip
+   * anything executable before it ever reaches the document.
+   */
+  function sanitize(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html || '';
+    tpl.content.querySelectorAll('script,style,iframe,object,embed,link,meta').forEach((n) => n.remove());
+    tpl.content.querySelectorAll('*').forEach((el) => {
+      [...el.attributes].forEach((attr) => {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on')) el.removeAttribute(attr.name);
+        if (name === 'src' && !/^(file|data):/i.test(attr.value)) el.removeAttribute(attr.name);
+        if (name === 'href') el.removeAttribute(attr.name);
+      });
+    });
+    return tpl.innerHTML;
+  }
+
+  // ---- init ----------------------------------------------------------------
+  applyColor(state.color);
+  text.innerHTML = sanitize(state.html);
+  text.style.fontSize = state.fontSize + 'px';
+  $('pin').classList.toggle('on', state.pinned);
+
+  const titleInput = $('title');
+  titleInput.value = state.title || '';
+  // Kept in the window title too, so alt-tab and the taskbar show the same name
+  // the saved file will get.
+  const syncWindowTitle = () => {
+    document.title = titleInput.value.trim() || 'Sticky note';
+  };
+  syncWindowTitle();
+  titleInput.addEventListener('input', () => {
+    patch({ title: titleInput.value });
+    syncWindowTitle();
+  });
+
+  const paletteRow = $('paletteRow');
+  palette.forEach((hex) => {
+    const dot = document.createElement('span');
+    dot.className = 'swatch';
+    dot.style.background = hex;
+    dot.title = hex;
+    dot.onclick = () => { applyColor(hex); patch({ color: hex }); closePops(); };
+    paletteRow.appendChild(dot);
+  });
+
+  const hiliteRow = $('hiliteRow');
+  HILITES.forEach((hex) => {
+    const dot = document.createElement('span');
+    dot.className = 'swatch';
+    dot.style.background = hex;
+    dot.title = 'Highlight';
+    dot.onmousedown = (e) => e.preventDefault();   // keep the text selection alive
+    dot.onclick = () => { exec('hiliteColor', hex); };
+    hiliteRow.appendChild(dot);
+  });
+  const clearHi = document.createElement('span');
+  clearHi.className = 'swatch none';
+  clearHi.title = 'Remove highlight';
+  clearHi.onmousedown = (e) => e.preventDefault();
+  clearHi.onclick = () => exec('hiliteColor', 'transparent');
+  hiliteRow.appendChild(clearHi);
+
+  // ---- saving --------------------------------------------------------------
+  let lastHtml = text.innerHTML;
+  const saveBody = () => {
+    patch({ html: text.innerHTML, text: text.innerText });
+    refreshGutter();
+  };
+  text.addEventListener('input', () => {
+    if (text.innerHTML !== lastHtml) {
+      pushUndo(lastHtml);
+      lastHtml = text.innerHTML;
+    }
+    saveBody();
+  });
+  text.addEventListener('scroll', refreshGutter);
+  window.addEventListener('resize', refreshGutter);
+  window.addEventListener('blur', saveBody);
+  window.addEventListener('beforeunload', saveBody);
+
+  // ---- saving a copy to disk -----------------------------------------------
+  const toast = $('toast');
+  let toastTimer = null;
+  function showToast(message, bad) {
+    toast.textContent = message;
+    toast.classList.toggle('bad', !!bad);
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), bad ? 7000 : 4000);
+  }
+
+  $('save').onclick = () => {
+    closePops();
+    // Flush what is on screen first: the main process writes from the note data,
+    // not from this DOM, and it handles these two messages in the order sent.
+    saveBody();
+    patch({ title: titleInput.value });
+    window.api.send('note:save');
+  };
+
+  // ---- AI actions ---------------------------------------------------------
+  //
+  // The AI rewrites the note's HTML. Images are swapped for [IMG:n] tokens
+  // before sending and restored after, so the model can never lose or move a
+  // picture. Every applied result is undoable; redo is available until a new
+  // action overwrites the branch.
+  const undoStack = [];
+  const redoStack = [];
+  const UNDO_LIMIT = 100;
+  let aiPrompts = [];
+  let aiBusy = false;
+
+  function updateUndoButtons() {
+    $('undo').disabled = undoStack.length === 0 || aiBusy;
+    $('redo').disabled = redoStack.length === 0 || aiBusy;
+  }
+
+  function pushUndo(html) {
+    if (html == null) return;
+    if (undoStack[undoStack.length - 1] === html) return;
+    undoStack.push(html);
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    redoStack.length = 0;
+    updateUndoButtons();
+  }
+
+  function applyAiResult(newHtml, label) {
+    pushUndo(text.innerHTML);
+    text.innerHTML = newHtml;
+    lastHtml = newHtml;
+    saveBody();
+    updateUndoButtons();
+    showToast(label ? `AI: ${label}` : 'AI: applied');
+  }
+
+  $('undo').onclick = () => {
+    if (!undoStack.length || aiBusy) return;
+    redoStack.push(text.innerHTML);
+    text.innerHTML = undoStack.pop();
+    lastHtml = text.innerHTML;
+    saveBody();
+    updateUndoButtons();
+  };
+
+  $('redo').onclick = () => {
+    if (!redoStack.length || aiBusy) return;
+    undoStack.push(text.innerHTML);
+    text.innerHTML = redoStack.pop();
+    lastHtml = text.innerHTML;
+    saveBody();
+    updateUndoButtons();
+  };
+
+  function aiStatus(msg, cls) {
+    const el = $('ai-status');
+    el.textContent = msg || '';
+    el.className = cls || '';
+  }
+
+  async function openAiPicker() {
+    const pop = $('ai-pop');
+    const visible = !pop.hidden;
+    closePops();
+    if (visible) return;
+    pop.hidden = false;
+    aiStatus('');
+    // Keep an unsent draft visible so a mis-click outside does not lose the text.
+    $('ai-custom-box').hidden = !$('ai-custom-text').value;
+
+    const list = $('ai-list');
+    list.innerHTML = '';
+    aiPrompts = await window.api.invoke('ai:prompts:list') || [];
+    if (!aiPrompts.length) {
+      const none = document.createElement('div');
+      none.className = 'ai-item';
+      none.style.color = 'rgba(255,255,255,.45)';
+      none.textContent = 'No saved prompts yet — add them via ✦ on the bar.';
+      list.appendChild(none);
+    } else {
+      const groups = new Map();
+      for (const p of aiPrompts) {
+        const folder = p.folder || 'skills';
+        if (!groups.has(folder)) groups.set(folder, []);
+        groups.get(folder).push(p);
+      }
+      for (const [folder, items] of groups) {
+        const lbl = document.createElement('div');
+        lbl.className = 'ai-folder-lbl';
+        lbl.textContent = folder;
+        list.appendChild(lbl);
+        for (const p of items) {
+          const b = document.createElement('button');
+          b.className = 'ai-item';
+          const t = document.createElement('span');
+          t.textContent = p.title;
+          const sub = document.createElement('span');
+          sub.className = 'sub';
+          sub.textContent = p.prompt.slice(0, 60) + (p.prompt.length > 60 ? '…' : '');
+          b.append(t, sub);
+          b.onclick = () => { $('ai-pop').hidden = true; runAi(p.prompt, p.title); };
+          list.appendChild(b);
+        }
+      }
+    }
+  }
+
+  $('ai').onclick = openAiPicker;
+  $('ai-pop-close').onclick = (e) => { e.stopPropagation(); $('ai-pop').hidden = true; };
+
+  $('ai-custom').onclick = (e) => {
+    e.stopPropagation();
+    $('ai-custom-box').hidden = !$('ai-custom-box').hidden;
+    if (!$('ai-custom-box').hidden) $('ai-custom-text').focus();
+  };
+
+  async function sendCustom() {
+    const p = $('ai-custom-text').value.trim();
+    if (!p) return;
+    $('ai-pop').hidden = true;
+    const ok = await runAi(p, 'Custom');
+    if (ok) $('ai-custom-text').value = '';
+  }
+
+  $('ai-custom-run').onclick = (e) => {
+    e.stopPropagation();
+    sendCustom();
+  };
+
+  $('ai-custom-text').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const ta = e.target;
+      const a = ta.selectionStart;
+      const b = ta.selectionEnd;
+      ta.value = ta.value.slice(0, a) + '\n' + ta.value.slice(b);
+      ta.selectionStart = ta.selectionEnd = a + 1;
+      return;
+    }
+    e.preventDefault();
+    sendCustom();
+  });
+
+  /**
+   * Main process builds soul + skill + note markdown (or only the cited
+   * lines) and returns HTML already patched. We just apply it.
+   */
+  async function runAi(prompt, label) {
+    if (aiBusy) return false;
+    aiBusy = true;
+    updateUndoButtons();
+    aiStatus('Thinking…', '');
+    saveBody();
+
+    try {
+      const res = await window.api.invoke('ai:run', { prompt });
+      if (!res || !res.ok) {
+        aiStatus((res && res.message) || 'The request failed.', 'err');
+        return false;
+      }
+      applyAiResult(res.html, label);
+      const extra = res.mode === 'lines' ? ` (lines ${ (res.lines || []).join(', ') } only)` : '';
+      aiStatus(`Done in ${res.latencyMs} ms${extra}. ↶ to undo.`, 'ok');
+      return true;
+    } catch (err) {
+      aiStatus(err && err.message ? err.message : 'Unexpected error.', 'err');
+      return false;
+    } finally {
+      aiBusy = false;
+      updateUndoButtons();
+    }
+  }
+
+  // The full path is worth showing - the whole point is that the user knows
+  // where their notes landed.
+  window.api.on('note:saved', (res) => {
+    if (res && res.ok && res.skipped) showToast(`Already saved as ${res.name}`);
+    else if (res && res.ok) showToast(`Saved ${res.name}\n${res.dir}`);
+    else showToast(`Could not save: ${(res && res.error) || 'unknown error'}`, true);
+  });
+
+  function exec(cmd, value) {
+    text.focus();
+    document.execCommand(cmd, false, value);
+    saveBody();
+  }
+
+  // ---- formatting ----------------------------------------------------------
+  $('bold').onmousedown = (e) => e.preventDefault();
+  $('bold').onclick = () => exec('bold');
+
+  document.querySelectorAll('#formatPop .mini[data-cmd]').forEach((btn) => {
+    btn.onmousedown = (e) => e.preventDefault();
+    btn.onclick = () => exec(btn.dataset.cmd);
+  });
+  $('clearFmt').onmousedown = (e) => e.preventDefault();
+  $('clearFmt').onclick = () => { exec('removeFormat'); exec('hiliteColor', 'transparent'); };
+
+  const setFont = (delta) => {
+    const size = Math.min(30, Math.max(10, state.fontSize + delta));
+    text.style.fontSize = size + 'px';
+    patch({ fontSize: size });
+    refreshGutter();
+  };
+  $('bigger').onclick = () => setFont(1);
+  $('smaller').onclick = () => setFont(-1);
+
+  // ---- popovers ------------------------------------------------------------
+  const pops = [$('palette'), $('formatPop')];
+  const closePops = () => {
+    pops.forEach((p) => p.classList.remove('open'));
+    $('ai-pop').hidden = true;
+  };
+  const togglePop = (pop) => {
+    const wasOpen = pop.classList.contains('open');
+    closePops();
+    if (!wasOpen) pop.classList.add('open');
+  };
+  $('colors').onclick = () => togglePop($('palette'));
+  $('format').onmousedown = (e) => e.preventDefault();
+  $('format').onclick = () => togglePop($('formatPop'));
+  document.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.pop') || e.target.closest('#colors') || e.target.closest('#format')) return;
+    if (e.target.closest('#ai-pop') || e.target.closest('#ai')) return;
+    closePops();
+  });
+
+  // ---- images --------------------------------------------------------------
+  function insertImage(url) {
+    text.focus();
+    document.execCommand('insertHTML', false, `<img src="${url}">`);
+    saveBody();
+  }
+
+  $('image').onclick = async () => {
+    closePops();
+    const urls = await window.api.invoke('image:choose');
+    (urls || []).forEach(insertImage);
+  };
+
+  async function storeBlob(file) {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    const url = await window.api.invoke('image:save', { bytes: Array.from(buf), ext });
+    if (url) insertImage(url);
+  }
+
+  // Paste: images land as files, everything else is forced to plain text so a
+  // copy from a web page can't drag styling or markup into the note.
+  text.addEventListener('paste', (e) => {
+    const items = [...(e.clipboardData?.items || [])];
+    const image = items.find((i) => i.type.startsWith('image/'));
+    e.preventDefault();
+    if (image) {
+      const file = image.getAsFile();
+      if (file) storeBlob(file);
+      return;
+    }
+    const plain = e.clipboardData?.getData('text/plain') || '';
+    if (plain) document.execCommand('insertText', false, plain);
+    saveBody();
+  });
+
+  // Drag and drop image files straight onto the note.
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+  ['dragenter', 'dragover'].forEach((type) => document.addEventListener(type, (e) => {
+    stop(e);
+    document.body.classList.add('dropping');
+  }));
+  ['dragleave', 'dragend'].forEach((type) => document.addEventListener(type, (e) => {
+    stop(e);
+    document.body.classList.remove('dropping');
+  }));
+  document.addEventListener('drop', (e) => {
+    stop(e);
+    document.body.classList.remove('dropping');
+    const files = [...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith('image/'));
+    files.forEach(storeBlob);
+  });
+
+  // ---- header buttons ------------------------------------------------------
+  $('add').onclick = () => window.api.send('note:new');
+
+  $('pin').onclick = () => {
+    const pinned = !state.pinned;
+    $('pin').classList.toggle('on', pinned);
+    $('pin').title = pinned ? 'Pinned on top — click to unpin' : 'Not pinned — click to keep on top';
+    patch({ pinned });
+  };
+
+  // Two-step delete: the first click arms it, a second within 3s removes the
+  // note. Deleted notes go to History, so this is recoverable either way.
+  const closeBtn = $('close');
+  let armed = false, armTimer = null;
+  closeBtn.onclick = () => {
+    if (!text.innerText.trim() || armed) { saveBody(); window.api.send('note:delete'); return; }
+    armed = true;
+    closeBtn.classList.add('danger');
+    closeBtn.textContent = '?';
+    closeBtn.title = 'Click again to delete (it will go to History)';
+    clearTimeout(armTimer);
+    armTimer = setTimeout(() => {
+      armed = false;
+      closeBtn.classList.remove('danger');
+      closeBtn.textContent = '✕';
+      closeBtn.title = 'Delete note';
+    }, 3000);
+  };
+
+  // ---- this note's own timer -----------------------------------------------
+  const strip = $('tstrip');
+  const clock = $('tclock');
+  const edit = $('tedit');
+  const saved = state.timer || {};
+  let timerOn = !!saved.enabled;
+
+  const timer = window.createTimer({
+    onChange: (s) => {
+      clock.textContent = window.fmtTime(s.msLeft);
+      clock.classList.toggle('running', s.running && !s.finished);
+      clock.classList.toggle('done', s.finished);
+      strip.classList.toggle('done', s.finished);
+      $('tplay').textContent = s.running ? '❚❚' : '▶';
+      persistTimer(s);
+    },
+    onDone: () => {
+      window.beep();
+      const snippet = text.innerText.trim().split('\n')[0].slice(0, 40);
+      window.api.send('timer:done', { label: snippet ? `Note: ${snippet}` : 'Note timer' });
+    },
+  });
+
+  let persistPending = null;
+  function persistTimer(s) {
+    clearTimeout(persistPending);
+    persistPending = setTimeout(() => {
+      patch({
+        timer: {
+          enabled: timerOn,
+          durationMs: s.durationMs,
+          remainingMs: s.running ? null : s.remainingMs,
+          deadline: s.deadline,
+          finished: s.finished,
+        },
+      });
+    }, 250);
+  }
+
+  function showTimer(on, { persist = true } = {}) {
+    timerOn = on;
+    strip.classList.toggle('show', on);
+    $('timer').classList.toggle('on', on);
+    $('timer').title = on ? 'Hide this note’s timer' : 'Add a timer to this note';
+    if (!on) timer.pause();
+    if (persist) patch({ timer: { ...timer.snapshot(), enabled: on } });
+  }
+
+  timer.hydrate(saved);
+  showTimer(timerOn, { persist: false });
+
+  $('timer').onclick = () => showTimer(!timerOn);
+  $('tplay').onclick = () => timer.toggle();
+  $('treset').onclick = () => timer.reset();
+  $('tremove').onclick = () => { timer.reset(); showTimer(false); };
+
+  document.querySelectorAll('.chip').forEach((chip) => {
+    chip.onclick = () => { timer.reset(Number(chip.dataset.min) * 60000); timer.start(); };
+  });
+
+  clock.onclick = () => window.api.send('timer:pick', {
+    durationMs: timer.snapshot().durationMs,
+  });
+  window.api.on('timer:set', (ms) => { timer.reset(ms); timer.start(); });
+  window.api.on('timer:custom', openCustom);
+
+  function openCustom() {
+    timer.pause();
+    edit.value = String(Math.round(timer.snapshot().durationMs / 60000));
+    clock.style.display = 'none';
+    edit.style.display = 'block';
+    edit.focus();
+    edit.select();
+  }
+  function commitEdit(apply) {
+    if (apply) {
+      const ms = window.parseDuration(edit.value);
+      if (ms) timer.reset(ms);
+    }
+    edit.style.display = 'none';
+    clock.style.display = '';
+  }
+  edit.onkeydown = (e) => {
+    if (e.key === 'Enter') { commitEdit(true); timer.start(); }
+    if (e.key === 'Escape') commitEdit(false);
+  };
+  edit.onblur = () => commitEdit(true);
+
+  // ---- resize grips --------------------------------------------------------
+  document.querySelectorAll('.rs').forEach((grip) => {
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      const startX = e.screenX, startY = e.screenY;
+      window.api.send('resize:start', grip.dataset.edge);
+
+      const move = (ev) => window.api.send('resize:move', {
+        dx: ev.screenX - startX,
+        dy: ev.screenY - startY,
+      });
+      const up = () => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        grip.removeEventListener('pointercancel', up);
+        window.api.send('resize:end');
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+      grip.addEventListener('pointercancel', up);
+    });
+  });
+
+  // ---- local shortcuts -----------------------------------------------------
+  window.api.on('note:focus-text', () => text.focus());
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && (e.key === '+' || e.key === '=')) { e.preventDefault(); setFont(1); }
+    if (e.ctrlKey && e.key === '-') { e.preventDefault(); setFont(-1); }
+    if (e.ctrlKey && e.key.toLowerCase() === 'h') { e.preventDefault(); exec('hiliteColor', HILITES[0]); }
+    if (e.ctrlKey && e.key.toLowerCase() === 'z') { e.preventDefault(); $('undo').click(); }
+    if (e.ctrlKey && e.key.toLowerCase() === 'y') { e.preventDefault(); $('redo').click(); }
+    if (e.key === 'Escape') closePops();
+  });
+  text.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setFont(e.deltaY < 0 ? 1 : -1);
+  }, { passive: false });
+
+  refreshGutter();
+  text.focus();
+})();
+</script>
+</body>
+</html>

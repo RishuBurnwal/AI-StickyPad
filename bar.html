@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AI-StickyPad</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    -webkit-app-region: drag;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    background: #1b1d21;
+    color: #e8eaed;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 12px;
+    user-select: none;
+    border: 1px solid #34383f;
+    border-radius: 10px;
+  }
+
+  button, input { -webkit-app-region: no-drag; font-family: inherit; }
+  .btn {
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid #3a3f47;
+    border-radius: 7px;
+    background: #24272d;
+    color: #dfe3e8;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .btn:hover { background: #2e323a; border-color: #4a505a; }
+  .btn.primary { background: #f2c14e; border-color: #f2c14e; color: #23201a; font-weight: 600; }
+  .btn.primary:hover { background: #ffd166; }
+  .btn.on { background: #2b6ee0; border-color: #2b6ee0; color: #fff; }
+  .btn.warn { background: #6d2f2f; border-color: #8a3a3a; color: #ffdede; }
+  .btn.help { font-weight: 700; font-size: 14px; color: #f2c14e; }
+  .btn.help:hover, .btn.help.on { background: #f2c14e; border-color: #f2c14e; color: #23201a; }
+  .icon { width: 28px; padding: 0; justify-content: center; font-size: 13px; }
+
+  .sep { width: 1px; height: 30px; background: #34383f; flex: 0 0 auto; }
+  .spacer { flex: 1 1 auto; height: 100%; }
+
+  /* ---- timer ---- */
+  #timer { display: flex; align-items: center; gap: 5px; }
+  #clock {
+    -webkit-app-region: no-drag;
+    min-width: 66px;
+    text-align: center;
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 19px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .5px;
+    color: #f2c14e;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 6px;
+  }
+  #clock:hover { background: #24272d; }
+  #clock.running { color: #7ee08a; }
+  #clock.done { color: #ff7b6b; animation: pulse .7s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+  #edit {
+    display: none;
+    width: 62px;
+    height: 28px;
+    text-align: center;
+    background: #14161a;
+    border: 1px solid #4a505a;
+    border-radius: 6px;
+    color: #f2c14e;
+    font-family: Consolas, monospace;
+    font-size: 16px;
+  }
+  .chip {
+    -webkit-app-region: no-drag;
+    height: 24px;
+    min-width: 26px;
+    padding: 0 6px;
+    border: 1px solid #3a3f47;
+    border-radius: 6px;
+    background: #24272d;
+    color: #aeb4bd;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .chip:hover { background: #2e323a; color: #fff; }
+
+  #count { color: #7b828c; font-size: 11px; min-width: 44px; }
+
+  /* ---- collapsed handle ---- */
+  /* Collapsing shrinks the window itself; this pill is all that is left, so the
+     toolbar stays one click away rather than only a remembered hotkey away. */
+  #pill {
+    display: none;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  #pill .note {
+    position: relative;
+    width: 23px; height: 23px;
+    background: #f5c542;
+    border-radius: 4px 4px 0 4px;
+  }
+  #pill .note::after {
+    content: "";
+    position: absolute; right: 0; bottom: -7px;
+    border-width: 7px 7px 0 0;
+    border-style: solid;
+    border-color: #c99622 transparent transparent transparent;
+  }
+  #pill .badge {
+    position: absolute;
+    top: -6px; right: -8px;
+    min-width: 15px;
+    padding: 0 3px;
+    background: #2b6ee0;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 9px;
+    line-height: 15px;
+    text-align: center;
+  }
+  #pill:hover .note { background: #ffd166; }
+
+  #full { display: flex; align-items: center; gap: 6px; width: 100%; height: 100%; }
+  body.collapsed { gap: 0; padding: 0; justify-content: center; }
+  body.collapsed #full { display: none; }
+  body.collapsed #pill { display: flex; }
+</style>
+</head>
+<body>
+  <div id="full">
+    <button class="btn primary" id="new" title="New note (Ctrl+Alt+M)">＋ Note</button>
+    <button class="btn" id="hide" title="Hide / show all notes (Ctrl+Alt+H)">👁 Hide</button>
+    <button class="btn" id="through" title="Let clicks pass through notes to the app underneath (Ctrl+Alt+T)">🖱 Click‑thru</button>
+    <span id="count"></span>
+    <button class="btn icon" id="history" title="History — deleted notes you can restore">🗑</button>
+
+    <div class="sep"></div>
+
+    <div id="timer">
+      <span id="clock" title="Click to choose a duration">25:00</span>
+      <input id="edit" type="text" inputmode="numeric" />
+      <button class="chip" data-min="5">5</button>
+      <button class="chip" data-min="15">15</button>
+      <button class="chip" data-min="25">25</button>
+      <button class="btn icon" id="play" title="Start / pause">▶</button>
+      <button class="btn icon" id="reset" title="Reset">↺</button>
+    </div>
+
+    <button class="btn icon" id="ai" title="AI actions (Ctrl+Alt+Y)" style="color:#f2c14e;font-weight:700;font-size:15px">✦</button>
+    <span class="spacer"></span>
+    <div class="sep"></div>
+    <button class="btn icon help" id="help" title="Hotkeys &amp; cheat sheet (Ctrl+Alt+/)">?</button>
+    <button class="btn icon" id="collapse" title="Collapse to a small handle">❯</button>
+    <button class="btn icon" id="minimise" title="Hide the bar completely (Ctrl+Alt+B brings it back)">−</button>
+    <button class="btn icon warn" id="quit" title="Quit AI-StickyPad">✕</button>
+  </div>
+
+  <button id="pill" title="Show the toolbar">
+    <span class="note"><span class="badge" id="pillCount"></span></span>
+  </button>
+
+<script src="timer-core.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  // ---- notes -------------------------------------------------------------
+  $('new').onclick = () => window.api.send('note:new');
+  $('hide').onclick = () => window.api.send('app:toggle-hide');
+  $('through').onclick = () => window.api.send('app:toggle-clickthrough');
+  $('history').onclick = () => window.api.send('app:toggle-history');
+  $('ai').onclick = () => window.api.send('app:toggle-ai');
+  $('help').onclick = () => window.api.send('app:toggle-help');
+  $('minimise').onclick = () => window.api.send('app:hide-bar');
+  $('quit').onclick = () => window.api.send('app:quit');
+
+  $('collapse').onclick = () => window.api.send('app:collapse-bar', true);
+  $('pill').onclick = () => window.api.send('app:collapse-bar', false);
+  window.api.on('collapsed', (on) => document.body.classList.toggle('collapsed', !!on));
+
+  window.api.on('state', (s) => {
+    $('hide').classList.toggle('on', s.notesHidden);
+    $('hide').textContent = s.notesHidden ? '👁 Show' : '👁 Hide';
+    $('through').classList.toggle('on', s.clickThrough);
+    $('help').classList.toggle('on', s.helpOpen);
+    $('history').classList.toggle('on', s.historyOpen);
+    $('history').title = s.historyCount
+      ? `History — ${s.historyCount} deleted note(s) you can restore`
+      : 'History — deleted notes you can restore';
+    $('count').textContent = s.noteCount === 1 ? '1 note' : s.noteCount + ' notes';
+    $('pillCount').textContent = s.noteCount || '';
+    $('pillCount').style.display = s.noteCount ? 'block' : 'none';
+  });
+
+  // ---- timer -------------------------------------------------------------
+  const clock = $('clock');
+  const edit = $('edit');
+
+  const timer = window.createTimer({
+    onChange: (s) => {
+      clock.textContent = window.fmtTime(s.msLeft);
+      clock.classList.toggle('running', s.running && !s.finished);
+      clock.classList.toggle('done', s.finished);
+      $('play').textContent = s.running ? '❚❚' : '▶';
+    },
+    onDone: () => {
+      window.beep();
+      window.api.send('timer:done', { label: 'Bar timer' });
+    },
+  });
+
+  $('play').onclick = () => timer.toggle();
+  $('reset').onclick = () => timer.reset();
+
+  document.querySelectorAll('.chip').forEach((chip) => {
+    chip.onclick = () => { timer.reset(Number(chip.dataset.min) * 60000); timer.start(); };
+  });
+
+  // Click the digits to pick a duration from a native menu; "Custom…" in that
+  // menu drops back to typing one.
+  clock.onclick = () => window.api.send('timer:pick', {
+    durationMs: timer.snapshot().durationMs,
+  });
+  window.api.on('timer:set', (ms) => { timer.reset(ms); timer.start(); });
+  window.api.on('timer:custom', openCustom);
+
+  function openCustom() {
+    timer.pause();
+    edit.value = String(Math.round(timer.snapshot().durationMs / 60000));
+    clock.style.display = 'none';
+    edit.style.display = 'block';
+    edit.focus();
+    edit.select();
+  }
+  function commitEdit(apply) {
+    if (apply) {
+      const ms = window.parseDuration(edit.value);
+      if (ms) timer.reset(ms);
+    }
+    edit.style.display = 'none';
+    clock.style.display = '';
+  }
+  edit.onkeydown = (e) => {
+    if (e.key === 'Enter') { commitEdit(true); timer.start(); }
+    if (e.key === 'Escape') commitEdit(false);
+  };
+  edit.onblur = () => commitEdit(true);
+
+  timer.reset(window.DEFAULT_DURATION);
+})();
+</script>
+</body>
+</html>

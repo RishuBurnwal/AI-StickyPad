@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AI-StickyPad — History</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: #1b1d21;
+    color: #e8eaed;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    user-select: none;
+    border: 1px solid #3a3f47;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  header {
+    -webkit-app-region: drag;
+    flex: 0 0 40px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px 0 14px;
+    background: #23262b;
+    border-bottom: 1px solid #34383f;
+  }
+  header h1 { font-size: 13px; font-weight: 600; }
+  header .spring { flex: 1 1 auto; height: 100%; }
+  header button {
+    -webkit-app-region: no-drag;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid #3a3f47;
+    border-radius: 6px;
+    background: #24272d;
+    color: #dfe3e8;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  header button:hover { background: #2e323a; }
+  header button.close { width: 26px; padding: 0; font-size: 12px; }
+  header button.close:hover { background: #6d2f2f; border-color: #8a3a3a; }
+
+  main { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
+  main::-webkit-scrollbar { width: 9px; }
+  main::-webkit-scrollbar-thumb { background: #3a3f47; border-radius: 5px; }
+
+  .item {
+    display: flex;
+    gap: 9px;
+    padding: 9px 10px;
+    margin-bottom: 7px;
+    background: #22262c;
+    border: 1px solid #2e323a;
+    border-radius: 8px;
+  }
+  .item:hover { border-color: #454b55; }
+  .dot {
+    flex: 0 0 auto;
+    width: 13px; height: 13px;
+    margin-top: 2px;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, .35);
+  }
+  .body { flex: 1 1 auto; min-width: 0; }
+  .preview {
+    color: #dfe3e8;
+    line-height: 1.4;
+    max-height: 54px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .preview .empty { color: #7b828c; font-style: italic; }
+  .meta { margin-top: 4px; color: #7b828c; font-size: 11px; }
+  .acts { flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px; }
+  .acts button {
+    height: 24px;
+    padding: 0 9px;
+    border: 1px solid #3a3f47;
+    border-radius: 6px;
+    background: #2a2e35;
+    color: #dfe3e8;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .acts button:hover { background: #343a42; }
+  .acts .restore:hover { background: #2b6ee0; border-color: #2b6ee0; color: #fff; }
+  .acts .forget:hover { background: #6d2f2f; border-color: #8a3a3a; color: #ffdede; }
+
+  .pill {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    background: #2e323a;
+    border-radius: 9px;
+    font-size: 10px;
+    color: #aeb4bd;
+  }
+
+  .empty-state {
+    padding: 40px 24px;
+    text-align: center;
+    color: #7b828c;
+    line-height: 1.6;
+  }
+  .empty-state b { color: #aeb4bd; display: block; margin-bottom: 6px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>History</h1>
+    <span class="pill" id="count"></span>
+    <span class="spring"></span>
+    <button id="clear" title="Permanently delete everything in history">Clear all</button>
+    <button class="close" id="close" title="Close (Esc)">✕</button>
+  </header>
+  <main id="list"></main>
+
+<script>
+(async () => {
+  const list = document.getElementById('list');
+  const count = document.getElementById('count');
+
+  document.getElementById('close').onclick = () => window.api.send('history:close');
+  document.getElementById('clear').onclick = () => window.api.send('history:clear');
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.api.send('history:close');
+  });
+
+  const when = (ms) => {
+    const d = new Date(ms);
+    const today = new Date();
+    const sameDay = d.toDateString() === today.toDateString();
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return sameDay ? `today ${time}` : `${d.toLocaleDateString()} ${time}`;
+  };
+
+  function render(entries) {
+    count.textContent = entries.length ? `${entries.length}` : '';
+    list.innerHTML = '';
+
+    if (!entries.length) {
+      list.innerHTML = '<div class="empty-state"><b>Nothing here yet</b>'
+        + 'Notes you delete land here so you can bring them back.<br>'
+        + 'Blank notes are skipped.</div>';
+      return;
+    }
+
+    for (const e of entries) {
+      const item = document.createElement('div');
+      item.className = 'item';
+
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = e.color || '#ffe9a3';
+
+      const body = document.createElement('div');
+      body.className = 'body';
+
+      const preview = document.createElement('div');
+      preview.className = 'preview';
+      const plain = String(e.text || '').trim();
+      const images = (String(e.html || '').match(/<img\b/gi) || []).length;
+      if (plain) {
+        preview.textContent = plain.slice(0, 220);
+      } else {
+        preview.innerHTML = '<span class="empty">(no text)</span>';
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `deleted ${when(e.deletedAt)}`
+        + (images ? ` · ${images} picture${images > 1 ? 's' : ''}` : '');
+
+      body.append(preview, meta);
+
+      const acts = document.createElement('div');
+      acts.className = 'acts';
+      const restore = document.createElement('button');
+      restore.className = 'restore';
+      restore.textContent = 'Restore';
+      restore.onclick = () => window.api.send('history:restore', e.key);
+      const forget = document.createElement('button');
+      forget.className = 'forget';
+      forget.textContent = 'Delete';
+      forget.title = 'Remove from history permanently';
+      forget.onclick = () => window.api.send('history:forget', e.key);
+      acts.append(restore, forget);
+
+      item.append(dot, body, acts);
+      list.appendChild(item);
+    }
+  }
+
+  render(await window.api.invoke('history:list'));
+  window.api.on('history:changed', render);
+})();
+</script>
+</body>
+</html>

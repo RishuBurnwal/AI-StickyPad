@@ -1,0 +1,42 @@
+{
+  "name": "ai-stickypad",
+  "version": "1.0.0",
+  "description": "AI-StickyPad — always-on-top desktop sticky notes with AI rewrite, vision, hotkeys, click-through and timers",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "author": "RishuBurnwal",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.rishuburnwal.aistickypad",
+    "productName": "AI-StickyPad",
+    "files": [
+      "main.js",
+      "preload.js",
+      "timer-core.js",
+      "note.html",
+      "bar.html",
+      "help.html",
+      "history.html",
+      "ai.html",
+      "icon.ico"
+    ],
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AI-StickyPad — Help</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: #1b1d21;
+    color: #e8eaed;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    user-select: none;
+    border: 1px solid #3a3f47;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  header {
+    -webkit-app-region: drag;
+    flex: 0 0 40px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px 0 14px;
+    background: #23262b;
+    border-bottom: 1px solid #34383f;
+  }
+  header h1 { font-size: 13px; font-weight: 600; letter-spacing: .2px; }
+  header .spring { flex: 1 1 auto; height: 100%; }
+  header button {
+    -webkit-app-region: no-drag;
+    width: 26px; height: 26px;
+    border: 1px solid #3a3f47;
+    border-radius: 6px;
+    background: #24272d;
+    color: #dfe3e8;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  header button:hover { background: #6d2f2f; border-color: #8a3a3a; }
+
+  main { flex: 1 1 auto; overflow-y: auto; padding: 4px 14px 16px; }
+  main::-webkit-scrollbar { width: 9px; }
+  main::-webkit-scrollbar-thumb { background: #3a3f47; border-radius: 5px; }
+
+  h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: #f2c14e;
+    margin: 16px 0 7px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 5px 0; vertical-align: top; line-height: 1.4; }
+  td:first-child { width: 128px; padding-right: 10px; white-space: nowrap; }
+  tr + tr td { border-top: 1px solid #2a2d33; }
+
+  kbd {
+    display: inline-block;
+    padding: 2px 6px;
+    background: #2e323a;
+    border: 1px solid #454b55;
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 11px;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .ico {
+    display: inline-block;
+    min-width: 22px;
+    padding: 1px 5px;
+    text-align: center;
+    background: #2a2d33;
+    border: 1px solid #3f444d;
+    border-radius: 5px;
+    font-size: 12px;
+  }
+  .muted { color: #9aa1ab; }
+  .tip {
+    margin-top: 14px;
+    padding: 9px 11px;
+    background: #22262c;
+    border-left: 3px solid #f2c14e;
+    border-radius: 0 6px 6px 0;
+    color: #c8cdd4;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>AI-StickyPad — cheat sheet</h1>
+    <span class="spring"></span>
+    <button id="close" title="Close (Esc)">✕</button>
+  </header>
+
+  <main>
+    <h2>Global hotkeys — work from inside any app</h2>
+    <table>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>M</kbd></td><td>New note ("make")</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>H</kbd></td><td>Hide / show <b>all</b> notes</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>T</kbd></td><td>Click-through on / off ("through")</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>B</kbd></td><td>Hide / show the control bar</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>D</kbd></td><td>History — notes you deleted, ready to restore</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Y</kbd></td><td>AI actions — prompts, settings, keys</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>/</kbd></td><td>Open / close this cheat sheet</td></tr>
+    </table>
+
+    <h2>On a note</h2>
+    <table>
+      <tr><td><span class="ico">＋</span></td><td>New note, cascaded off this one and the same size</td></tr>
+      <tr><td>Title</td><td>Type one at the top of the note. The saved file is named after it — leave it blank and the first line of the text is used instead</td></tr>
+      <tr><td>Top strip</td><td>Drag it to move the note</td></tr>
+      <tr><td>Edges &amp; corner</td><td>Drag to resize — any edge, or the ribbed bottom-right corner</td></tr>
+      <tr><td><span class="ico">A−</span> <span class="ico">A+</span></td><td>Text size — or <kbd>Ctrl</kbd> + mouse wheel over the text</td></tr>
+      <tr><td><span class="ico">B</span></td><td>Bold — or <kbd>Ctrl</kbd> <kbd>B</kbd></td></tr>
+      <tr><td><span class="ico">Aa</span></td><td>Italic, underline, strikethrough, <b>highlight colours</b>, text size, and Clear formatting</td></tr>
+      <tr><td><span class="ico">🖼</span></td><td>Add a picture — or just <b>paste</b> one, or drag a file onto the note</td></tr>
+      <tr><td><span class="ico">◍</span></td><td>Note colour — 7 swatches</td></tr>
+      <tr><td><span class="ico">⏱</span></td><td>Add / hide <b>this note's own timer</b></td></tr>
+      <tr><td><span class="ico">💾</span></td><td>Save a copy — choose PDF, Markdown, JSON, HTML or plain text</td></tr>
+      <tr><td><span class="ico">✦</span></td><td>AI actions — run a saved prompt on this note, or type a custom one. <b>↶ ↷</b> undo / redo any AI change</td></tr>
+      <tr><td><span class="ico">📌</span></td><td>Pin. On = always above other windows. Off = behaves like a normal window</td></tr>
+      <tr><td><span class="ico">✕</span></td><td>Delete. Click once to arm (turns red), click again to confirm — it goes to History, not away</td></tr>
+    </table>
+
+    <h2>Saving &amp; history</h2>
+    <table>
+      <tr><td>Saving</td><td>Automatic. Text, formatting, pictures, size, position, colour and timers all come back next launch</td></tr>
+      <tr><td>Save a copy</td><td><span class="ico">💾</span> on a note, then pick the format. It lands in <b>Notes\saved\&lt;format&gt;\</b> next to the app, named after the note's title — never inside AppData</td></tr>
+      <tr><td>Which formats</td><td>Markdown (headings, lists, bold and highlights carried over as <b>==highlight==</b>), PDF, JSON, a standalone HTML page, or plain text</td></tr>
+      <tr><td>Same name twice</td><td>Nothing is overwritten — the second file becomes <b>Name (2).md</b>, then <b>Name (3).md</b></td></tr>
+      <tr><td>Deleted a note?</td><td><span class="ico">🗑</span> on the bar or <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>D</kbd> — the last 200 deleted notes, with <b>Restore</b>. A readable copy of each is also kept in <b>Notes\history\</b></td></tr>
+    </table>
+
+    <h2>AI actions</h2>
+    <table>
+      <tr><td><span class="ico">✦</span> on the bar</td><td>Opens the AI window: <b>Prompts</b> (create / edit / delete reusable skills by title + prompt) and <b>Settings</b></td></tr>
+      <tr><td><span class="ico">✦</span> on a note</td><td>Lists your saved prompts plus <b>Custom prompt…</b> at the end. Picking one sends the prompt + the note's content to the AI and rewrites the note</td></tr>
+      <tr><td>Pictures</td><td>Images are swapped for <b>[IMG:n]</b> tokens before sending and put back where they fit — nothing the AI does can lose a picture</td></tr>
+      <tr><td>Undo / redo</td><td><b>↶ ↷</b> on the note step through every AI change, as many times as you like (100 steps kept)</td></tr>
+      <tr><td>Settings</td><td>Pick the provider + model, <b>Fetch models from API</b>, <b>Test model</b> (one tiny request — live / dead, with the real error: bad key, rate limit, payment required), add a <b>custom model</b> (any OpenAI-compatible URL)</td></tr>
+      <tr><td>Keys</td><td>Multiple keys per provider — when one hits a rate limit the next is tried automatically. The count shows next to each provider. Keys live in <b>.env</b> next to the app and can be added / removed from the UI too</td></tr>
+    </table>
+
+    <h2>The bar in your way?</h2>
+    <table>
+      <tr><td><span class="ico">❯</span></td><td>Collapse it to a small handle — click the handle to bring it back</td></tr>
+      <tr><td><span class="ico">−</span></td><td>Hide it completely — <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>B</kbd> brings it back</td></tr>
+    </table>
+
+    <h2>Timers</h2>
+    <table>
+      <tr><td>Where</td><td>One on the control bar, plus an independent one on every note (<span class="ico">⏱</span>)</td></tr>
+      <tr><td>Choose a time</td><td>Click the digits — a menu offers 1 min up to 2 hours. Picking one sets <i>and</i> starts it</td></tr>
+      <tr><td>Any other time</td><td><b>Custom…</b> at the bottom of that menu lets you type it: <b>7</b> = 7 minutes, <b>1:30</b> = 1 min 30 sec</td></tr>
+      <tr><td><span class="ico">5</span> <span class="ico">15</span> <span class="ico">25</span></td><td>Presets — one click sets <i>and</i> starts. Widen a narrow note to see them</td></tr>
+      <tr><td><span class="ico">▶</span> <span class="ico">❚❚</span></td><td>Start / pause</td></tr>
+      <tr><td><span class="ico">↺</span></td><td>Reset to the last duration</td></tr>
+      <tr><td>When it ends</td><td>Beeps, a Windows notification, and the clock pulses red. Hidden notes pop back into view</td></tr>
+      <tr><td class="muted">Accuracy</td><td class="muted">Timers run off a wall-clock deadline, so they survive being hidden, throttled, or a restart</td></tr>
+    </table>
+
+    <h2>Click-through mode</h2>
+    <table>
+      <tr><td>What it does</td><td>Notes stay fully visible on top, but the mouse passes <b>straight through</b> them into the app underneath</td></tr>
+      <tr><td>Not the same as hiding</td><td>Nothing disappears — this is the "read my notes while I work" mode</td></tr>
+      <tr><td>Getting back</td><td>The control bar stays clickable, and <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>T</kbd> works from anywhere</td></tr>
+    </table>
+
+    <div class="tip">
+      Everything is saved automatically — text, formatting, pictures, position, size,
+      colour, pin state and timers all come back exactly as you left them.
+      <br />
+      <span class="muted">Hid the bar and forgot? <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>B</kbd> brings it back.</span>
+    </div>
+
+    <div class="tip">
+      <b style="color:#f2c14e">Latvian keyboard:</b> Windows sends AltGr as Ctrl+Alt, and a
+      global hotkey swallows that combo everywhere. So these deliberately avoid
+      <kbd>a c e g i k l n o r s u z</kbd> — the letters carrying garumzīmes and mīkstinājuma
+      zīmes. <b>ā č ē ģ ī ķ ļ ņ š ū ž all keep working.</b>
+    </div>
+  </main>
+
+<script>
+  document.getElementById('close').onclick = () => window.api.send('app:close-help');
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.api.send('app:close-help');
+  });
+</script>
+</body>
+</html>
