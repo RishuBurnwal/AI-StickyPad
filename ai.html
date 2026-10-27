@@ -74,6 +74,21 @@
   }
   #tabs button.active { color: #fff; border-bottom-color: #f2c14e; }
   #tabs button:hover { color: #fff; }
+  /* Option pills (Dictation tab): the selected one is gold — unmistakable. */
+  .opt {
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid #3a3f47;
+    border-radius: 6px;
+    background: #24272d;
+    color: #aeb4bd;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .opt:hover { background: #2e323a; color: #fff; }
+  .opt.sel { background: #f2c14e; border-color: #f2c14e; color: #23201a; font-weight: 700; }
 
   /* ---- content ------------------------------------------------------------ */
   .page { display: none; flex: 1; overflow-y: auto; padding: 10px; }
@@ -232,6 +247,8 @@
   <div id="tabs">
     <button id="tab-prompts" class="active">Prompts</button>
     <button id="tab-settings">Settings</button>
+    <button id="tab-speakers">Speakers</button>
+    <button id="tab-dictation">Dictation</button>
   </div>
 
   <!-- ============ PROMPTS ============ -->
@@ -329,6 +346,110 @@
       <div id="status-keys" style="margin-top:6px; font-size:11px"></div>
     </div>
   </div>
+  <!-- ============ SPEAKERS ============ -->
+  <div id="page-speakers" class="page">
+    <p class="hint">
+      Call mode names: <b>PU</b> is you (the mic), <b>SU</b> is the far side of a call
+      (the speakers). Rename or recolour here once — <b>every</b> label already written in
+      every note updates at the same time.
+    </p>
+
+    <div class="card">
+      <h3>PU — primary user (your mic)</h3>
+      <div class="field">
+        <label for="sp-pu-label">Name</label>
+        <input id="sp-pu-label" type="text" maxlength="40" placeholder="PU" />
+      </div>
+      <div class="field">
+        <label for="sp-pu-color">Colour</label>
+        <input id="sp-pu-color" type="color" value="#1c60c8" />
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>SU — secondary user (the call / speakers)</h3>
+      <div class="field">
+        <label for="sp-su-label">Name</label>
+        <input id="sp-su-label" type="text" maxlength="40" placeholder="SU" />
+      </div>
+      <div class="field">
+        <label for="sp-su-color">Colour</label>
+        <input id="sp-su-color" type="color" value="#b3170f" />
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Define one extra user (optional)</h3>
+      <p class="hint" style="margin:0 0 8px">
+        In a meeting, you can single out <b>one</b> more speaker: give them a name and a
+        <b>cue phrase</b> — whenever a line from the call contains that phrase, it is tagged
+        with this user instead of SU.
+      </p>
+      <div class="field">
+        <label for="sp-def-label">Name</label>
+        <input id="sp-def-label" type="text" maxlength="40" placeholder="e.g. Rishu" />
+      </div>
+      <div class="field">
+        <label for="sp-def-color">Colour</label>
+        <input id="sp-def-color" type="color" value="#14733a" />
+      </div>
+      <div class="field">
+        <label for="sp-def-cue">Cue phrase (a sentence or name they say often)</label>
+        <input id="sp-def-cue" type="text" maxlength="120" placeholder="e.g. mera naam Rishu hai" />
+      </div>
+      <div class="row">
+        <button id="sp-save" class="btn">Save speakers</button>
+        <button id="sp-clear" class="btn ghost">Remove defined user</button>
+      </div>
+      <div id="sp-status"></div>
+    </div>
+  </div>
+
+  <!-- ============ DICTATION ============ -->
+  <div id="page-dictation" class="page">
+    <p class="hint">
+      How dictation behaves when you tap <b>🎤</b> on a note (the note button is just
+      on/off — everything is configured here). Defaults: <b>Both sides</b> + <b>Auto-detect</b>.
+    </p>
+
+    <div class="card">
+      <h3>Listener — who gets transcribed</h3>
+      <div class="field">
+        <label>Mode</label>
+        <div class="row" style="gap:6px; flex-wrap:wrap" id="dict-listener-row">
+          <button class="opt" data-listener="mic">🎤 Only mic (PU)</button>
+          <button class="opt" data-listener="sys">🔊 Only speaker (SU)</button>
+          <button class="opt" data-listener="both">🎤🔊 Both sides</button>
+        </div>
+      </div>
+      <p class="hint" style="margin:2px 0 0">
+        <b>Only mic</b>: sirf aap (PU). <b>Only speaker</b>: sirf call (SU).
+        <b>Both</b>: dono — live call transcription.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Language</h3>
+      <div class="field">
+        <label>Speech language</label>
+        <div class="row" style="gap:6px; flex-wrap:wrap" id="dict-lang-row">
+          <button class="opt" data-lang="auto">🌐 Auto-detect</button>
+          <button class="opt" data-lang="hi">हिंदी / Hinglish</button>
+          <button class="opt" data-lang="en">English</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Speaker names &amp; colours</h3>
+      <p class="hint" style="margin:0">
+        PU / SU rename, colours aur the one definable user — <b>Speakers</b> tab me.
+      </p>
+    </div>
+
+    <div id="dict-status" class="hint"></div>
+  </div>
+
 </div>
 
 <script>
@@ -343,12 +464,20 @@
   function showPage(name) {
     $('page-prompts').classList.toggle('show', name === 'prompts');
     $('page-settings').classList.toggle('show', name === 'settings');
+    $('page-speakers').classList.toggle('show', name === 'speakers');
+    $('page-dictation').classList.toggle('show', name === 'dictation');
     $('tab-prompts').classList.toggle('active', name === 'prompts');
     $('tab-settings').classList.toggle('active', name === 'settings');
+    $('tab-speakers').classList.toggle('active', name === 'speakers');
+    $('tab-dictation').classList.toggle('active', name === 'dictation');
     if (name === 'settings') loadSettings();
+    if (name === 'speakers') loadSpeakers();
+    if (name === 'dictation') loadDictation();
   }
   $('tab-prompts').onclick = () => showPage('prompts');
   $('tab-settings').onclick = () => showPage('settings');
+  $('tab-speakers').onclick = () => showPage('speakers');
+  $('tab-dictation').onclick = () => showPage('dictation');
   $('close').onclick = () => window.api.send('ai:close');
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') window.api.send('ai:close');
@@ -459,6 +588,109 @@
     refreshFolders();
   });
   refreshFolders();
+
+  // The bar's 🎙 opens this window straight onto the Dictation tab.
+  window.api.on('ai:show-page', (name) => { if (name) showPage(name); });
+
+  // ---- dictation (listener mode + language) --------------------------------
+  let dictSettings = { listener: 'both', language: 'auto' };
+
+  function renderDictation() {
+    document.querySelectorAll('#dict-listener-row .opt').forEach((b) => {
+      b.classList.toggle('sel', b.dataset.listener === dictSettings.listener);
+    });
+    document.querySelectorAll('#dict-lang-row .opt').forEach((b) => {
+      b.classList.toggle('sel', b.dataset.lang === dictSettings.language);
+    });
+    const lm = { mic: 'Only mic (PU)', sys: 'Only speaker (SU)', both: 'Both sides' };
+    const lg = { auto: 'Auto-detect', hi: 'Hindi/Hinglish', en: 'English' };
+    $('dict-status').textContent =
+      `Current: ${lm[dictSettings.listener]} · ${lg[dictSettings.language]} — notes ka 🎤 bas on/off hai.`;
+  }
+
+  async function loadDictation() {
+    try {
+      const s = await window.api.invoke('stt:settings:get');
+      if (s) { dictSettings = s; renderDictation(); }
+    } catch (e) { /* keep defaults shown */ }
+  }
+
+  document.querySelectorAll('#dict-listener-row .opt').forEach((b) => {
+    b.onclick = () => {
+      dictSettings.listener = b.dataset.listener;
+      renderDictation();
+      window.api.send('stt:settings:set', { listener: b.dataset.listener });
+    };
+  });
+  document.querySelectorAll('#dict-lang-row .opt').forEach((b) => {
+    b.onclick = () => {
+      dictSettings.language = b.dataset.lang;
+      renderDictation();
+      window.api.send('stt:settings:set', { language: b.dataset.lang });
+    };
+  });
+  window.api.on('stt:settings-changed', (s) => {
+    if (s && s.listener) { dictSettings = s; renderDictation(); }
+  });
+
+  // ---- speakers -------------------------------------------------------------
+  function spStatus(msg, cls) {
+    const el = $('sp-status');
+    el.textContent = msg || '';
+    el.className = cls || '';
+  }
+
+  async function loadSpeakers() {
+    let reg;
+    try { reg = await window.api.invoke('stt:speakers:get'); } catch (e) { return; }
+    if (!reg) return;
+    $('sp-pu-label').value = reg.PU ? reg.PU.label : 'PU';
+    $('sp-pu-color').value = reg.PU ? reg.PU.color : '#1c60c8';
+    $('sp-su-label').value = reg.SU ? reg.SU.label : 'SU';
+    $('sp-su-color').value = reg.SU ? reg.SU.color : '#b3170f';
+    $('sp-def-label').value = reg.defined ? reg.defined.label : '';
+    $('sp-def-color').value = reg.defined ? reg.defined.color : '#14733a';
+    $('sp-def-cue').value = reg.defined ? reg.defined.cue : '';
+    spStatus('');
+  }
+
+  $('sp-save').onclick = () => {
+    const patch = {
+      PU: { label: $('sp-pu-label').value, color: $('sp-pu-color').value },
+      SU: { label: $('sp-su-label').value, color: $('sp-su-color').value },
+    };
+    const label = $('sp-def-label').value.trim();
+    const cue = $('sp-def-cue').value.trim();
+    if (label || cue) {
+      patch.defined = { label: label || 'User 1', color: $('sp-def-color').value, cue };
+    } else {
+      patch.defined = null;   // nothing typed = no defined user
+    }
+    window.api.send('stt:speakers:set', patch);
+    spStatus('Saved — every label in every note just updated.', 'ok');
+  };
+
+  $('sp-clear').onclick = () => {
+    window.api.send('stt:speakers:set', { defined: null });
+    $('sp-def-label').value = '';
+    $('sp-def-cue').value = '';
+    spStatus('Defined user removed — their lines fall back to SU.', 'ok');
+  };
+
+  window.api.on('stt:speakers-changed', (reg) => {
+    if (document.getElementById('page-speakers').classList.contains('show')) {
+      // another window saved; keep this tab in sync
+      if (reg) {
+        $('sp-pu-label').value = reg.PU.label;
+        $('sp-pu-color').value = reg.PU.color;
+        $('sp-su-label').value = reg.SU.label;
+        $('sp-su-color').value = reg.SU.color;
+        $('sp-def-label').value = reg.defined ? reg.defined.label : '';
+        $('sp-def-color').value = reg.defined ? reg.defined.color : '#14733a';
+        $('sp-def-cue').value = reg.defined ? reg.defined.cue : '';
+      }
+    }
+  });
 
   // ---- settings -----------------------------------------------------------
   async function loadSettings() {

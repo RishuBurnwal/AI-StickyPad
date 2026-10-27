@@ -124,6 +124,7 @@
       <tr><td><span class="ico">🖼</span></td><td>Add a picture — or just <b>paste</b> one, or drag a file onto the note</td></tr>
       <tr><td><span class="ico">◍</span></td><td>Note colour — 7 swatches</td></tr>
       <tr><td><span class="ico">⏱</span></td><td>Add / hide <b>this note's own timer</b></td></tr>
+      <tr><td><span class="ico">🎤</span></td><td><b>Dictate</b> — tap 🎤 to start, tap again to stop. Offline Hindi / Hinglish / English. Mode & language are set on the <b>bar</b> (🎙 → Dictation tab); live text shows in the strip <b>below</b> the note text</td></tr>
       <tr><td><span class="ico">💾</span></td><td>Save a copy — choose PDF, Markdown, JSON, HTML or plain text</td></tr>
       <tr><td><span class="ico">✦</span></td><td>AI actions — run a saved prompt on this note, or type a custom one. <b>↶ ↷</b> undo / redo any AI change</td></tr>
       <tr><td><span class="ico">📌</span></td><td>Pin. On = always above other windows. Off = behaves like a normal window</td></tr>
@@ -147,6 +148,27 @@
       <tr><td>Undo / redo</td><td><b>↶ ↷</b> on the note step through every AI change, as many times as you like (100 steps kept)</td></tr>
       <tr><td>Settings</td><td>Pick the provider + model, <b>Fetch models from API</b>, <b>Test model</b> (one tiny request — live / dead, with the real error: bad key, rate limit, payment required), add a <b>custom model</b> (any OpenAI-compatible URL)</td></tr>
       <tr><td>Keys</td><td>Multiple keys per provider — when one hits a rate limit the next is tried automatically. The count shows next to each provider. Keys live in <b>.env</b> next to the app and can be added / removed from the UI too</td></tr>
+    </table>
+
+    <h2>Offline dictation 🎤</h2>
+    <table>
+      <tr><td>What it is</td><td>Speech-to-text that runs <b>entirely on your machine</b> — no internet, no GPU, no cloud. Hindi, Hinglish (mixed Hindi + English) and English</td></tr>
+      <tr><td>One-time setup</td><td><b>python stt\setup.py</b> (or option 4 in <b>main.py</b>). Downloads the speech model once (default <b>small</b> — the first size whose Devanagari Hindi is actually good); after that everything is offline</td></tr>
+      <tr><td>Using it</td><td><span class="ico">🎤</span> on a note → <b>tap once to start, tap again to stop</b>. Mode (mic/speaker/both) and language come from the bar's 🎙 panel — defaults: both sides + auto-detect. Text appears live in the strip under the note; finished sentences are inserted into the note</td></tr>
+      <tr><td>Interruption</td><td>Dictation is listening while an AI answer is being generated — if you start speaking, the AI request is <b>cancelled</b> instantly (barge-in). Your voice always wins</td></tr>
+      <tr><td>Echo guard</td><td>If the <b>speakers are playing</b> something, dictation suppresses that sound automatically — the speakers can never end up in your notes. Speaker silent → no extra cost</td></tr>
+      <tr><td>Language modes</td><td><b>Hindi/Hinglish</b> writes Hindi words in Devanagari and English words in Latin (e.g. "मैं market जा रहा हूँ"); <b>English</b>; <b>Auto-detect</b> decides per utterance</td></tr>
+      <tr><td>Too slow / too heavy?</td><td>Set <b>STT_MODEL=base</b> (faster, weaker Hindi) or <b>STT_MODEL=tiny</b> before launching the app</td></tr>
+      <tr><td class="muted">Privacy</td><td class="muted">The microphone audio never leaves the process — transcription happens in a local Python engine beside the app</td></tr>
+    </table>
+
+    <h2>Call mode 📞 (PU / SU speakers)</h2>
+    <table>
+      <tr><td>What it does</td><td>Transcribes a <b>live call</b> (Zoom, Google Meet, WhatsApp) into a note: <b>PU</b> = you (the mic), <b>SU</b> = the far side (captured digitally from the speakers — perfect quality, no echo problem: the two never share a channel)</td></tr>
+      <tr><td>Starting it</td><td>Open the bar's 🎙 → AI window → <b>Dictation tab</b> → Listener = <b>Both sides</b> (or Only speaker). Then 🎤 on a note starts it: <b>PU</b> = you (mic), <b>SU</b> = the call (speakers). Each line lands in the note with a coloured speaker label</td></tr>
+      <tr><td>Renaming</td><td>Open <b>AI → Speakers</b>: rename PU or SU once and <b>every label in every note updates</b> at the same time — no per-line editing. Colours are per-speaker and customizable there too</td></tr>
+      <tr><td>One definable user</td><td>In a meeting you can single out <b>one</b> extra speaker: give them a name + a <b>cue phrase</b> (something they say, like their name). Any call line containing that phrase is tagged with their name instead of SU</td></tr>
+      <tr><td class="muted">Privacy</td><td class="muted">Both channels are transcribed locally. Nothing is uploaded</td></tr>
     </table>
 
     <h2>The bar in your way?</h2>

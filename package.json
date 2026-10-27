@@ -25,7 +25,10 @@
       "help.html",
       "history.html",
       "ai.html",
-      "icon.ico"
+      "icon.ico",
+      "stt/**",
+      "!stt/models/**",
+      "!**/__pycache__/**"
     ],
     "win": {
       "icon": "icon.ico",

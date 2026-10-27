@@ -43,6 +43,34 @@ A small dark bar sits in the top-right. That bar is home base.
 Markdown, PDF, JSON, HTML, plain text under `Notes/saved/<format>/`.  
 **Same title overwrites the same file** — no `Note (2).md` spam. If the file is already identical, save is skipped.
 
+### Offline dictation (`🎤` on a note)
+Speech-to-text that runs **entirely on your machine** — Hindi, Hinglish (code-switched) and English, no internet, no GPU, no cloud. Your words appear in the note live while you speak; finished sentences are inserted as plain text (undoable like any edit). While an AI answer is in flight, starting to speak **cancels it instantly** (barge-in).
+
+One-time setup (downloads the model once — default `small`, the first size whose Devanagari Hindi is actually good):
+
+```bat
+python stt\setup.py          :: or:  python main.py  →  option 4
+```
+
+Then tap `🎤` on any note → speak (tap again to stop). Mode & language live on the **bar → 🎙 → Dictation tab** (defaults: both sides + auto-detect). `STT_MODEL` selects `tiny` (fastest) / `base` (faster, weaker Hindi) / `small` (default, best Hindi); `STT_PYTHON` points at the interpreter that has the dependencies if you have several.
+
+**Echo guard** - superseded by **Call mode** below: instead of suppressing speaker audio in the mic, PU and SU are captured on two separate channels, so the call's audio can never contaminate the user's transcript.
+
+### Call mode 📞 — transcribe Zoom / Meet / WhatsApp calls (PU + SU)
+
+Set it on the **bar → 🎙 → AI window → Dictation tab → Listener = Both sides** (or Only speaker), then tap `🎤` on a note. Two independent channels run at once:
+
+- **PU (Primary User)** — your microphone
+- **SU (Secondary User)** — the far side of the call, captured digitally from the system mixer (WASAPI loopback via the pure-python `soundcard` package), so it works with any call app and never shares a channel with your voice
+
+Each line lands in the note with a coloured speaker label. Manage speakers under **AI → Speakers**:
+
+- **Rename once, updates everywhere** — labels are keyed in the note; renaming PU/SU rewrites every occurrence in every note instantly
+- **Per-speaker colours**, customizable
+- **One definable user** — in a meeting, single out one extra speaker by a **cue phrase** (e.g. their name): any call line containing it is tagged with that user instead of SU
+
+Engine: **faster-whisper** (INT8, CPU) + **Silero VAD**, both MIT-licensed and cached in `stt\models\` (≈150 MB total — see `stt\models\README.md`). The original spec named Moonshine, but Moonshine is an English-only ASR model, so a Hindi/Hinglish engine that actually meets "offline + CPU + quantized" was chosen instead.
+
 ### Click-through & timers
 - `Ctrl+Alt+T` — mouse passes through notes; bar stays clickable
 - Bar timer + per-note timers (wall-clock deadline, survives restart)
@@ -81,6 +109,8 @@ Or `python main.py` (run / portable EXE / NSIS installer). Output is `dist\` as 
 | `Notes/Prompt/skills/` | Reusable skills |
 | `Notes/saved/<format>/` | 💾 exports (one file per title) |
 | `Notes/history/` | Deleted-note copies |
+| `stt/` | Offline dictation engine (Python sidecar + `setup.py`) |
+| `stt/models/` | Speech models downloaded by setup — git-ignored, never shipped |
 | `.env` | API keys |
 | `%APPDATA%\ai-stickypad\` | Window store (Electron userData) |
 

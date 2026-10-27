@@ -161,6 +161,7 @@
       <button class="btn icon" id="reset" title="Reset">↺</button>
     </div>
 
+    <button class="btn icon" id="dict" title="Dictation & call settings — opens the AI window's Dictation tab">🎙</button>
     <button class="btn icon" id="ai" title="AI actions (Ctrl+Alt+Y)" style="color:#f2c14e;font-weight:700;font-size:15px">✦</button>
     <span class="spacer"></span>
     <div class="sep"></div>
@@ -192,6 +193,15 @@
   $('collapse').onclick = () => window.api.send('app:collapse-bar', true);
   $('pill').onclick = () => window.api.send('app:collapse-bar', false);
   window.api.on('collapsed', (on) => document.body.classList.toggle('collapsed', !!on));
+
+  // ---- dictation settings ----------------------------------------------------
+  // The 🎙 button opens the AI window's Dictation tab (tabs + ✕ = back).
+  // The note's 🎤 is just on/off with whatever is selected there.
+  // Defaults: both sides + auto-detect.
+  let dictSettings = { listener: 'both', language: 'auto' };
+  $('dict').onclick = () => window.api.send('app:open-dict');
+  window.api.invoke('stt:settings:get').then((s) => { if (s) dictSettings = s; });
+
 
   window.api.on('state', (s) => {
     $('hide').classList.toggle('on', s.notesHidden);

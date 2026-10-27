@@ -20,6 +20,7 @@ const {
 } = electron;
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 const { pathToFileURL, fileURLToPath } = require('url');
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,73 @@ let barHidden = false;
 let barCollapsed = false;   // bar shrunk to a small handle
 /** The bar's expanded bounds, tracked separately so collapsing can't lose them. */
 let barBounds = null;
+
+// Speaker labels for transcriptions. PU = this machine's user (mic), SU =
+// the far side of a call (loopback). `defined` is the ONE extra user the
+// caller may single out by a cue phrase (max one, per design).
+const SPEAKER_DEFAULTS = {
+  PU: { label: 'PU', color: '#1c60c8' },
+  SU: { label: 'SU', color: '#b3170f' },
+};
+const DEFINED_KEY = 'U1';
+let speakerRegistry = { PU: { ...SPEAKER_DEFAULTS.PU }, SU: { ...SPEAKER_DEFAULTS.SU }, defined: null };
+
+// Dictation/call settings, chosen on the MAIN BAR (🎙): listener mode and
+// language. Defaults per spec: auto-detect language, both-side listening.
+const STT_SETTINGS_DEFAULTS = { listener: 'both', language: 'auto' };
+let sttSettings = { ...STT_SETTINGS_DEFAULTS };
+
+function sanitizeSttSettings(raw) {
+  const out = { ...STT_SETTINGS_DEFAULTS };
+  if (raw && typeof raw === 'object') {
+    if (['mic', 'sys', 'both'].includes(raw.listener)) out.listener = raw.listener;
+    if (['auto', 'hi', 'en'].includes(raw.language)) out.language = raw.language;
+  }
+  return out;
+}
+
+function sanitizeSpeakerRegistry(raw) {
+  const out = { PU: { ...SPEAKER_DEFAULTS.PU }, SU: { ...SPEAKER_DEFAULTS.SU }, defined: null };
+  const cleanLabel = (v) => String(v == null ? '' : v)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f]/g, ' ')
+    // Angle brackets can never mean anything in a NAME; stripping them keeps
+    // labels tidy even though they are only ever rendered via textContent.
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ').trim().slice(0, 40);
+  const cleanColor = (v, fb) => (/^#[0-9a-fA-F]{6}$/.test(String(v || '')) ? String(v) : fb);
+  for (const key of ['PU', 'SU']) {
+    if (raw && raw[key]) {
+      if (typeof raw[key].label === 'string' && raw[key].label.trim()) out[key].label = cleanLabel(raw[key].label);
+      out[key].color = cleanColor(raw[key].color, out[key].color);
+    }
+  }
+  if (raw && raw.defined && typeof raw.defined === 'object') {
+    const label = cleanLabel(raw.defined.label);
+    const cue = String(raw.defined.cue == null ? '' : raw.defined.cue)
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 120);
+    if (label || cue) {
+      out.defined = {
+        key: DEFINED_KEY,
+        label: label || 'User 1',
+        color: cleanColor(raw.defined.color, '#14733a'),
+        cue,
+      };
+    }
+  }
+  return out;
+}
+
+/** Which speaker label does this transcript line belong to? */
+function speakerForChannel(ch, text) {
+  if (ch !== 'sys') return { key: 'PU', ...speakerRegistry.PU };
+  const d = speakerRegistry.defined;
+  if (d && d.cue && String(text || '').toLowerCase().includes(d.cue.toLowerCase())) {
+    return { key: d.key, label: d.label, color: d.color };
+  }
+  return { key: 'SU', ...speakerRegistry.SU };
+}
 // Set once the app is genuinely shutting down. Windows closing during a quit
 // must NOT be treated as the user deleting notes.
 let quitting = false;
@@ -56,6 +124,10 @@ let quitting = false;
 // Per-window scratch state for custom edge/corner resizing.
 /** @type {Map<number, {edge: string, bounds: Electron.Rectangle}>} */
 const resizeAnchors = new Map();
+
+// One AbortController per in-flight AI run. Barge-in (the user starting to
+// speak while an AI answer is being generated) aborts them all.
+const aiRunAborts = new Set();
 
 const PALETTE = ['#ffe9a3', '#ffb8c9', '#a9d9ff', '#b7efc5', '#dbc7ff', '#ffc9a3', '#e6eaee'];
 const MIN_W = 216;
@@ -311,7 +383,9 @@ function writeEnv(updates) {
   }
   for (const [name, value] of Object.entries(pending)) {
     if (lines.length && lines[lines.length - 1] === '') lines.pop();
-    lines.push(`${name}=${value}`);
+    // A newline inside a value would inject extra variables into .env
+    // (measured in QA 2026-10-27: key "x\nEVIL=1" created EVIL). Flatten.
+    lines.push(`${name}=${String(value).replace(/[\r\n\u0000]+/g, ' ')}`);
   }
   fs.writeFileSync(p, lines.join('\n'), 'utf8');
 }
@@ -319,11 +393,13 @@ function writeEnv(updates) {
 const AI_PROVIDERS = {
   gemini: {
     label: 'Google Gemini', envName: 'GEMINI_API_KEY', modelsApi: 'rest',
+    // 2026-10-27 live probe: 2.0-flash and flash-latest return HTTP 410 now;
+    // 2.5-flash answered in 1.7 s. flash-lite-latest is the cheap fallback.
     defaultModel: 'gemini-2.5-flash',
   },
   groq: {
     label: 'Groq', envName: 'GROQ_API_KEY', modelsApi: 'openai',
-    base: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile',
+    base: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.1-8b-instant',
   },
   nvidia: {
     label: 'NVIDIA NIM', envName: 'NVIDIA_API_KEY', modelsApi: 'openai',
@@ -365,7 +441,9 @@ function aiErrorInfo(status, body) {
   const tail = apiMessage ? ` Provider said: ${String(apiMessage).slice(0, 300)}` : '';
   if (status === 401 || status === 403) return { kind: 'auth', message: 'API key rejected (invalid or revoked). Add a working key in AI settings.' + tail };
   if (status === 429) return { kind: 'rate-limit', message: apiMessage || 'Rate limit hit. If you added multiple keys for this provider, the next one is tried automatically.' };
-  if (status === 402 || status === 404) return { kind: 'not-available', message: apiMessage || 'Model not found or payment required — check the model name and your plan.' };
+  if (status === 402 || status === 404 || status === 410) {
+    return { kind: 'not-available', message: apiMessage || `Model gone or unavailable (HTTP ${status}). Trying another model/provider.` };
+  }
   if (status >= 500) return { kind: 'provider-down', message: `Provider error (HTTP ${status}). Try again shortly.` + tail };
   return { kind: 'http', message: apiMessage || `Request failed (HTTP ${status}).` };
 }
@@ -385,11 +463,33 @@ async function aiTestModel({ provider, model, baseUrl }) {
   }
 }
 
-async function fetchWithTimeout(url, options, ms = 30000) {
+async function fetchWithTimeout(url, options, ms = 30000, externalSignal) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
-  try { return await fetch(url, { ...options, signal: ctrl.signal }); }
-  finally { clearTimeout(timer); }
+  // A caller-side abort (barge-in cancelling an in-flight AI run) and our
+  // own timeout both surface as AbortError — keep them distinguishable.
+  const onExternalAbort = () => ctrl.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(timer);
+      throw Object.assign(new Error('Interrupted by your voice (barge-in).'), { kind: 'barge-in' });
+    }
+    externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.code === 20)) {
+      if (externalSignal && externalSignal.aborted) {
+        throw Object.assign(new Error('Interrupted by your voice (barge-in).'), { kind: 'barge-in' });
+      }
+      throw Object.assign(new Error('The request timed out.'), { kind: 'provider-down' });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+  }
 }
 
 /**
@@ -397,30 +497,43 @@ async function fetchWithTimeout(url, options, ms = 30000) {
  * in order; a 429 moves on to the next key, anything else fails fast with a
  * classified error the UI can show as-is.
  */
-async function aiChat({ provider, model, baseUrl, system, user, maxTokens, images }) {
+async function aiChat({ provider, model, baseUrl, system, user, maxTokens, images, signal }) {
   const prov = AI_PROVIDERS[provider];
   if (!prov) throw Object.assign(new Error(`Unknown provider "${provider}"`), { kind: 'config' });
   const keys = keysForProvider(readEnv(), provider);
   if (!keys.length) throw Object.assign(new Error(`No API key configured for ${prov.label}. Add one under AI → Settings → Keys.`), { kind: 'no-key' });
 
+  const geminiAlts = ['gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.0-flash'];
   let lastErr = null;
   for (const key of keys) {
-    try {
-      if (provider === 'gemini') return await geminiChat(key, model, system, user, maxTokens, images);
-      const base = baseUrl || prov.base;
-      if (!base) throw Object.assign(new Error('This custom provider has no base URL. Set it in AI → Settings → Custom model.'), { kind: 'config' });
-      return await openaiCompatibleChat(base, key, model, system, user, maxTokens, images);
-    } catch (err) {
-      lastErr = err;
-      if ((err.kind === 'rate-limit' || err.kind === 'provider-down') && keys.length > 1) continue;
-      throw err;
+    const tryModels = provider === 'gemini' ? [model, ...geminiAlts.filter((m) => m !== model)] : [model];
+    for (let i = 0; i < tryModels.length; i++) {
+      try {
+        if (provider === 'gemini') return await geminiChat(key, tryModels[i], system, user, maxTokens, images, signal);
+        const base = baseUrl || prov.base;
+        if (!base) throw Object.assign(new Error('This custom provider has no base URL. Set it in AI → Settings → Custom model.'), { kind: 'config' });
+        return await openaiCompatibleChat(base, key, tryModels[i], system, user, maxTokens, images, signal);
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          err = Object.assign(new Error('The request timed out. Trying another model/provider.'), { kind: 'provider-down' });
+        }
+        lastErr = err;
+        const retryable = err && (err.kind === 'not-available' || err.kind === 'rate-limit' || err.kind === 'provider-down');
+        if (retryable && i < tryModels.length - 1) continue;
+        if (retryable && keys.length > 1) break;
+        if (retryable) break;
+        throw err;
+      }
     }
   }
   throw lastErr || new Error('All keys failed.');
 }
 
 function shouldFallbackProvider(err) {
-  return !!(err && (err.kind === 'rate-limit' || err.kind === 'provider-down' || err.kind === 'no-key'));
+  if (!err) return false;
+  if (err.kind === 'rate-limit' || err.kind === 'provider-down' || err.kind === 'no-key' || err.kind === 'not-available') return true;
+  const msg = String(err.message || '').toLowerCase();
+  return /does not exist|model_not_found|not found|quota|resource exhausted|unavailable|high demand|http 410|gone/.test(msg);
 }
 
 /**
@@ -456,7 +569,17 @@ async function aiChatWithFallback(opts) {
       return out;
     } catch (err) {
       lastErr = err;
-      if (!shouldFallbackProvider(err)) throw err;
+      if (err.kind === 'not-available' && prov.defaultModel && model !== prov.defaultModel) {
+        try {
+          const out = await aiChat({ ...opts, provider, model: prov.defaultModel, baseUrl: baseUrl || prov.base });
+          out.usedProvider = provider;
+          out.usedModel = prov.defaultModel;
+          return out;
+        } catch (err2) {
+          lastErr = err2;
+        }
+      }
+      if (!shouldFallbackProvider(lastErr)) throw lastErr;
     }
   }
   throw lastErr || new Error('No provider with a working key is available.');
@@ -473,7 +596,7 @@ function geminiUserParts(user, images) {
   return parts;
 }
 
-async function geminiChat(key, model, system, user, maxTokens, images) {
+async function geminiChat(key, model, system, user, maxTokens, images, signal) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
   const body = {
     contents: [{ role: 'user', parts: geminiUserParts(user, images) }],
@@ -484,7 +607,7 @@ async function geminiChat(key, model, system, user, maxTokens, images) {
   const r = await fetchWithTimeout(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }, images && images.length ? 60000 : 30000);
+  }, images && images.length ? 60000 : 20000, signal);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const info = aiErrorInfo(r.status, j);
@@ -496,7 +619,7 @@ async function geminiChat(key, model, system, user, maxTokens, images) {
   return { text };
 }
 
-async function openaiCompatibleChat(baseUrl, key, model, system, user, maxTokens, images) {
+async function openaiCompatibleChat(baseUrl, key, model, system, user, maxTokens, images, signal) {
   const url = `${String(baseUrl).replace(/\/+$/, '')}/chat/completions`;
   const messages = [];
   if (system) messages.push({ role: 'system', content: String(system) });
@@ -518,7 +641,7 @@ async function openaiCompatibleChat(baseUrl, key, model, system, user, maxTokens
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens || 4096 }),
-  }, images && images.length ? 60000 : 30000);
+  }, images && images.length ? 60000 : 20000, signal);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const info = aiErrorInfo(r.status, j);
@@ -762,7 +885,10 @@ function noteImgDir(data) {
 
 function markdownToHtml(md, data) {
   let s = String(md || '').replace(/\r\n/g, '\n');
-  s = s.replace(/^# [^\n]+\n+/, '');
+  const noteTitle = data ? String(titleFor(data) || '').trim() : '';
+  if (noteTitle && s.startsWith(`# ${noteTitle}`)) {
+    s = s.replace(/^# [^\n]+\n+/, '');
+  }
   const lines = s.replace(/\n$/, '').split('\n');
   const out = [];
   let i = 0;
@@ -854,6 +980,19 @@ function fileFromImgSrc(src) {
 }
 
 /** Load the note's actual image files so the model can see them, not just the names. */
+/** Real image? Answered from the file's magic bytes, not its name — a junk
+ * file renamed .png otherwise rides to the provider as "image/png" and fails
+ * the whole request (measured in QA: "Unable to process input image"). */
+function imageMagicMime(buf) {
+  const starts = (sig, off = 0) => sig.every((b, i) => buf[off + i] === b);
+  if (starts([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
+  if (starts([0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (starts([0x47, 0x49, 0x46, 0x38])) return 'image/gif';         // GIF8
+  if (starts([0x42, 0x4d])) return 'image/bmp';                      // BM
+  if (starts([0x52, 0x49, 0x46, 0x46]) && buf.slice(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
+}
+
 function collectNoteImages(data, { onlyNames } = {}) {
   const out = [];
   const seen = new Set();
@@ -875,7 +1014,8 @@ function collectNoteImages(data, { onlyNames } = {}) {
       if (!st.isFile() || st.size < 8 || st.size > MAX_AI_IMAGE_BYTES) return;
       buf = fs.readFileSync(resolved);
     } catch (err) { return; }
-    const mime = IMAGE_MIME[path.extname(name).toLowerCase()] || 'image/png';
+    const mime = imageMagicMime(buf);
+    if (!mime) return;  // junk/wrong-content file: skip it, never fail the run
     out.push({ name, mime, data: buf.toString('base64') });
   };
 
@@ -1063,6 +1203,8 @@ function saveNow() {
     archive,
     aiPrompts,
     aiSettings,
+    speakerRegistry,
+    sttSettings,
   };
   try {
     fs.mkdirSync(path.dirname(storeFile()), { recursive: true });
@@ -1147,11 +1289,13 @@ function textToHtml(text) {
 function defaultBounds() {
   const area = screen.getPrimaryDisplay().workArea;
   const step = (noteData.size % 8) * 26;
+  // Wide enough that the whole 13-button toolbar (incl. 🎤) fits on one row
+  // and the close button is never clipped (measured: toolbar needs ~296 px).
   return {
     x: area.x + 80 + step,
     y: area.y + 80 + step,
-    width: 260,
-    height: 230,
+    width: 340,
+    height: 280,
   };
 }
 
@@ -1248,6 +1392,9 @@ function createNote(seed = {}, { focus = false } = {}) {
     archiveNote(noteData.get(data.id));
     noteWins.delete(data.id);
     noteData.delete(data.id);
+    // Closing the note that was dictating stops dictation — the mic cannot
+    // feed a window that no longer exists.
+    if (stt.activeNoteId === data.id) sttStop();
     saveSoon();
     pushState();
   });
@@ -1692,16 +1839,27 @@ function ensureBuiltinPrompts() {
 function soulDir() { return path.join(promptRoot(), 'soul'); }
 function soulMainFile() { return path.join(soulDir(), 'Soul.md'); }
 
+const OLD_DEFAULT_SOUL = 'You are a careful editor for this sticky note. Keep the user\'s voice and facts. Do not invent details. Preserve every ![name](img/file) image path exactly.';
+const DEFAULT_SOUL = [
+  'You help with this sticky note.',
+  'If the user asks you to write, draft, or compose something (letter, application, email, essay, etc.), produce the full usable text. Fill reasonable placeholders (date, name, school) rather than leaving the note empty.',
+  'If they ask to edit existing note content, keep their voice and facts; do not invent events they did not mention.',
+  'Never dump leftover instructions or fake image markdown like ![name](img/file) into the note. Only keep real image paths that already exist in the note.',
+].join(' ');
+
 function ensureBuiltinSoul() {
   try {
     fs.mkdirSync(soulDir(), { recursive: true });
+    const file = soulMainFile();
     const names = fs.readdirSync(soulDir()).filter((n) => /\.md$/i.test(n));
-    if (names.length) return;
-    fs.writeFileSync(
-      soulMainFile(),
-      'You are a careful editor for this sticky note. Keep the user\'s voice and facts. Do not invent details. Preserve every ![name](img/file) image path exactly.\n',
-      'utf8',
-    );
+    if (!names.length) {
+      fs.writeFileSync(file, `${DEFAULT_SOUL}\n`, 'utf8');
+      return;
+    }
+    if (names.length === 1 && names[0].toLowerCase() === 'soul.md' && fs.existsSync(file)) {
+      const cur = fs.readFileSync(file, 'utf8').trim();
+      if (cur === OLD_DEFAULT_SOUL) fs.writeFileSync(file, `${DEFAULT_SOUL}\n`, 'utf8');
+    }
   } catch (err) { /* first-run soul is best-effort */ }
 }
 
@@ -1840,6 +1998,11 @@ ipcMain.handle('ai:model:test', async (_event, { provider, model, baseUrl }) => 
 
 ipcMain.handle('ai:run', async (event, { prompt, content } = {}) => {
   const t0 = Date.now();
+  // Arm barge-in: while this request is in flight the speech engine is told
+  // "AI is speaking", so the user starting to talk cancels it mid-flight.
+  const runAbort = new AbortController();
+  aiRunAborts.add(runAbort);
+  sttEngineTell({ type: 'state', ai_speaking: true });
   try {
     const { data } = senderNote(event);
     const instruction = String(prompt || '').trim();
@@ -1856,7 +2019,8 @@ ipcMain.handle('ai:run', async (event, { prompt, content } = {}) => {
     const hasNote = !!(data && ((data.text && data.text.trim()) || /<img\b/i.test(data.html || '')));
     const lineNums = parseLineRefs(instruction);
     const wantFull = /\bsummari[sz]e|summerize|full note|pura notes\b/i.test(instruction);
-    const useLines = lineNums.length > 0 && !wantFull && hasNote;
+    const wantCompose = !hasNote || /\b(write|draft|compose|generate|create|make|likh|application|letter|essay|email|mail|leave)\b/i.test(instruction);
+    const useLines = lineNums.length > 0 && !wantFull && !wantCompose && hasNote;
 
     let nameFilter = null;
     if (useLines) {
@@ -1868,19 +2032,21 @@ ipcMain.handle('ai:run', async (event, { prompt, content } = {}) => {
 
     const soul = readPromptFolderText('soul', 2500);
     const chunks = [];
-    if (soul) chunks.push(`## Soul\n${soul}`);
-    chunks.push(`## Instruction\n${instruction}`);
+    chunks.push(instruction);
     if (hasNote) {
       if (useLines) {
         chunks.push(
           '## Selected lines only (1-based). Reply with ONLY those lines as `N: replacement text`.\n'
           + extractNumberedLines(md, lineNums),
         );
-      } else {
+      } else if (!wantCompose) {
         chunks.push(
-          '## Note (markdown). Reply with the full updated markdown. Keep `![name](img/file)` paths.\n'
+          '## Note (markdown). Reply with the full updated markdown.'
+          + (images.length ? ' Keep existing `![name](img/file)` paths.\n' : '\n')
           + md,
         );
+      } else {
+        chunks.push('## Current note (optional context — write the requested document even if this is empty)\n' + (md || '(empty)'));
       }
     }
     if (images.length) {
@@ -1891,11 +2057,18 @@ ipcMain.handle('ai:run', async (event, { prompt, content } = {}) => {
       );
     }
 
-    const system = useLines
-      ? 'You edit only the numbered lines you were given. Output ONLY `N: text` lines. No commentary, no fences, no other lines.'
-        + (images.length ? ' Attached images belong to those lines — use what you see in them.' : '')
-      : 'You rewrite the note as Markdown. Output ONLY markdown — no HTML, no fences, no commentary. Preserve every ![alt](img/...) path.'
-        + (images.length ? ' You are also given the actual image pixels; use what you see, not just the filename.' : '');
+    const systemBits = [];
+    if (soul) systemBits.push(soul);
+    if (useLines) {
+      systemBits.push('You edit only the numbered lines you were given. Output ONLY `N: text` lines. No commentary, no fences, no other lines.');
+      if (images.length) systemBits.push('Attached images belong to those lines — use what you see in them.');
+    } else if (wantCompose) {
+      systemBits.push('The user wants you to WRITE a document. Output ONLY that document as Markdown. No HTML, no fences, no commentary, no headings named Soul or Instruction. Do not paste these system rules into the note. Do not insert fake image markdown.');
+    } else {
+      systemBits.push('You rewrite the existing note as Markdown. Output ONLY markdown — no HTML, no fences, no commentary.');
+      systemBits.push(images.length ? 'Preserve existing ![alt](img/...) paths.' : 'Do not invent image markdown.');
+    }
+    const system = systemBits.join('\n');
 
     const { text, usedProvider, usedModel } = await aiChatWithFallback({
       provider: aiSettings.provider,
@@ -1904,10 +2077,15 @@ ipcMain.handle('ai:run', async (event, { prompt, content } = {}) => {
       system,
       user: chunks.join('\n\n'),
       images,
+      signal: runAbort.signal,
     });
 
     let reply = String(text || '').trim();
     reply = reply.replace(/^```(?:markdown|md|html)?\s*/i, '').replace(/```\s*$/, '');
+    reply = reply.replace(/^##\s*(Soul|Instruction)\s*$/gmi, '').trim();
+    if (!images.length) {
+      reply = reply.replace(/!\[[^\]]*\]\(\s*img\/[^)]+\)\s*/g, '').trim();
+    }
 
     let newMd;
     if (useLines) {
@@ -1939,12 +2117,427 @@ ipcMain.handle('ai:run', async (event, { prompt, content } = {}) => {
     };
   } catch (err) {
     return { ok: false, message: err.message, kind: err.kind };
+  } finally {
+    aiRunAborts.delete(runAbort);
+    sttEngineTell({ type: 'state', ai_speaking: false });
   }
 });
 
 ipcMain.on('ai:open', () => aiWindow());
 ipcMain.on('ai:toggle', () => toggleAiWindow());
 ipcMain.on('ai:close', () => { if (aiWin && !aiWin.isDestroyed()) aiWin.hide(); });
+
+// ---------------------------------------------------------------------------
+// Offline speech-to-text (Python sidecar)
+// ---------------------------------------------------------------------------
+
+/*
+ * Dictation (🎤 on a note) runs in stt/engine.py: mic capture, Silero VAD
+ * and faster-whisper (INT8, CPU — Hindi, Hinglish code-switching, English)
+ * all live in Python, out of this process. The protocol is one JSON object
+ * per line over stdio, both directions.
+ *
+ * Python is discovered lazily: the first candidate whose
+ * `engine.py --check-runtime` exits 0 wins, so a machine with several
+ * Pythons (some without the deps) still works. If none passes, the mic
+ * menu says exactly how to set up instead of failing silently.
+ */
+// Dictation language/mode selection moved to the MAIN BAR (🎙 panel) —
+// the note's 🎤 is only an on/off toggle (stt:toggle).
+const stt = {
+  proc: null,          // the child, once spawned
+  ready: false,
+  spawning: null,      // in-flight spawn guard (two notes must not double-spawn)
+  pythonCmd: null,     // verified winner of the interpreter probe
+  pythonProbed: false,
+  activeNoteId: null,  // the note currently dictating — one mic, one note
+  mode: null,          // 'dictation' | 'call'
+  engineFile: null,    // staged engine.py path (set before probing)
+  engineDir: null,
+  readyWaiters: [],
+  readyReject: null,
+  stderrTail: [],
+};
+
+let sttFilesStaged = null; // promise resolving to the stt dir (or null on failure)
+
+function copySttTree(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  let names;
+  try { names = fs.readdirSync(src); } catch (err) { return; }
+  for (const name of names) {
+    // models are downloaded per machine, never shipped; pycache is build junk
+    if (name === '__pycache__' || name === 'models') continue;
+    const s = path.join(src, name);
+    const d = path.join(dest, name);
+    let st;
+    try { st = fs.statSync(s); } catch (err) { continue; }
+    if (st.isDirectory()) copySttTree(s, d);
+    else {
+      try { if (fs.statSync(d).size === st.size) continue; } catch (err) { /* not there yet */ }
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
+/**
+ * Where the engine script really lives. Dev: the repo's stt/ folder.
+ * Packaged: python cannot read inside app.asar, so the stt/ code is staged
+ * out to real files once — beside the EXE when that is writable (portable
+ * build: models live next to the app), else userData. The asar copy is the
+ * source of truth; an already-staged copy is refreshed in place.
+ */
+function ensureSttFiles() {
+  if (!app.isPackaged) return Promise.resolve(path.join(__dirname, 'stt'));
+  if (sttFilesStaged) return sttFilesStaged;
+  sttFilesStaged = (async () => {
+    const src = path.join(app.getAppPath(), 'stt');
+    const candidates = [
+      path.join(path.dirname(app.getPath('exe')), 'stt'),
+      path.join(app.getPath('userData'), 'stt'),
+    ];
+    for (const dest of candidates) {
+      try {
+        copySttTree(src, dest);
+        if (fs.existsSync(path.join(dest, 'engine.py'))) return dest;
+      } catch (err) {
+        console.warn(`[stt] cannot stage the engine at ${dest}:`, err.message);
+      }
+    }
+    return null;
+  })();
+  sttFilesStaged.catch(() => { /* callers see null */ });
+  return sttFilesStaged;
+}
+
+function sttModelChoice() {
+  return ['tiny', 'base', 'small'].includes(process.env.STT_MODEL) ? process.env.STT_MODEL : 'small';
+}
+
+function sttPythonCandidates() {
+  const out = [];
+  if (process.env.STT_PYTHON) out.push(process.env.STT_PYTHON.trim().split(/\s+/).filter(Boolean));
+  out.push(['python'], ['py', '-3.14'], ['py', '-3.13'], ['py', '-3.12'], ['py'], ['python3']);
+  return out;
+}
+
+/** exit 0 from `engine.py --check-runtime` = this interpreter has the deps. */
+function sttProbePython(cmd, engineFile) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd[0], [...cmd.slice(1), engineFile, '--check-runtime'], {
+        stdio: ['ignore', 'ignore', 'ignore'],
+        windowsHide: true,
+      });
+    } catch (err) { resolve(false); return; }
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (err) { /* already gone */ }
+      resolve(false);
+    }, 15000);
+    child.on('error', () => { clearTimeout(timer); resolve(false); });
+    child.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
+}
+
+async function sttFindPython() {
+  const dir = await ensureSttFiles();
+  if (!dir) {
+    stt.pythonProbed = true;   // nothing to probe against
+    return null;
+  }
+  stt.engineDir = dir;
+  stt.engineFile = path.join(dir, 'engine.py');
+  if (stt.pythonProbed) return stt.pythonCmd;
+  stt.pythonProbed = true;
+  for (const cmd of sttPythonCandidates()) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await sttProbePython(cmd, stt.engineFile)) { stt.pythonCmd = cmd; break; }
+  }
+  return stt.pythonCmd;
+}
+
+function sttWrite(obj) {
+  if (stt.proc && stt.proc.exitCode === null) {
+    try { stt.proc.stdin.write(`${JSON.stringify(obj)}\n`); } catch (err) { /* closing */ }
+  }
+}
+
+/** Best-effort tell — arming barge-in before the engine exists is fine to skip. */
+function sttEngineTell(obj) { if (stt.proc) sttWrite(obj); }
+
+function sttTellNote(noteId, channel, payload) {
+  const win = noteId ? noteWins.get(noteId) : null;
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+function sttBroadcastState() {
+  for (const win of noteWins.values()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('stt:state', { running: !!stt.activeNoteId, noteId: stt.activeNoteId });
+    }
+  }
+}
+
+function sttResolveReady() {
+  stt.readyReject = null;
+  const waiters = stt.readyWaiters;
+  stt.readyWaiters = [];
+  for (const resolve of waiters) resolve();
+}
+
+function handleSttEvent(ev) {
+  if (!ev || typeof ev !== 'object') return;
+  switch (ev.type) {
+    case 'ready':
+      stt.ready = true;
+      sttResolveReady();
+      break;
+    case 'vad':
+      sttTellNote(stt.activeNoteId, 'stt:vad', { speech: !!ev.speech, ch: ev.ch });
+      break;
+    case 'partial':
+      if (ev.ch) {
+        // Call mode: channel-tagged; the ghost strip shows whose voice it is.
+        const spk = speakerForChannel(ev.ch, ev.text);
+        sttTellNote(stt.activeNoteId, 'stt:partial', { text: String(ev.text || ''), ms: ev.ms, speaker: spk });
+      } else {
+        sttTellNote(stt.activeNoteId, 'stt:partial', { text: String(ev.text || ''), ms: ev.ms });
+      }
+      break;
+    case 'final':
+      if (ev.ch) {
+        const spk = speakerForChannel(ev.ch, ev.text);
+        sttTellNote(stt.activeNoteId, 'stt:final', {
+          text: String(ev.text || ''), ms: ev.ms, audioMs: ev.audio_ms, speaker: spk,
+        });
+      } else {
+        sttTellNote(stt.activeNoteId, 'stt:final', { text: String(ev.text || ''), ms: ev.ms, audioMs: ev.audio_ms });
+      }
+      break;
+    case 'barge_in':
+      // The user spoke while an AI run was in flight. There is no TTS in
+      // this app yet, so "pause the AI" = cancel every live AI request; the
+      // aborted ai:run itself reports "Interrupted by your voice."
+      for (const ctrl of aiRunAborts) {
+        try { ctrl.abort(); } catch (err) { /* already aborted */ }
+      }
+      break;
+    case 'status':
+      // Engine progress ("loading model…", "listening (hi)"). Named
+      // stt:progress so it cannot be confused with the stt:status invoke.
+      sttTellNote(stt.activeNoteId, 'stt:progress', { message: String(ev.message || '') });
+      break;
+    case 'stopped':
+      stt.activeNoteId = null;
+      sttBroadcastState();
+      break;
+    case 'error':
+      sttTellNote(stt.activeNoteId, 'stt:error', {
+        kind: ev.kind || 'unknown',
+        message: String(ev.message || 'Dictation error.'),
+      });
+      if (ev.kind === 'model' && stt.proc) {
+        try { stt.proc.kill(); } catch (err) { /* ignore */ }
+      }
+      if (ev.kind === 'no-mic') {
+        stt.activeNoteId = null;
+        sttBroadcastState();
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+function spawnSttEngine() {
+  if (stt.proc && stt.proc.exitCode === null) return Promise.resolve(stt.proc);
+  if (stt.spawning) return stt.spawning;
+
+  const child = spawn(stt.pythonCmd[0],
+    [...stt.pythonCmd.slice(1), stt.engineFile, '--stdio', '--model', sttModelChoice()],
+    {
+      cwd: stt.engineDir,
+      windowsHide: true,
+    });
+  stt.proc = child;
+  stt.stderrTail = [];
+
+  let buf = '';
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      try {
+        handleSttEvent(JSON.parse(line));
+      } catch (err) {
+        console.warn('[stt] unparseable line:', line.slice(0, 200));
+      }
+    }
+  });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => {
+    stt.stderrTail.push(String(chunk));
+    if (stt.stderrTail.length > 30) stt.stderrTail.shift();
+  });
+
+  stt.spawning = new Promise((resolve, reject) => {
+    stt.readyWaiters.push(resolve);
+    stt.readyReject = reject;
+    // First run may legitimately download the model — allow 10 minutes
+    // rather than declaring a healthy install broken.
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (err) { /* ignore */ }
+      reject(new Error('The speech engine did not become ready in time.'));
+    }, 10 * 60 * 1000);
+    stt.readyWaiters.push(() => clearTimeout(timer));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+  stt.spawning.catch(() => { /* callers get the error; nothing to do here */ });
+
+  child.on('exit', (code) => {
+    stt.proc = null;
+    stt.ready = false;
+    stt.spawning = null;
+    if (stt.readyReject) {
+      const tail = stt.stderrTail.join('').slice(-300);
+      stt.readyReject(new Error(`Speech engine exited early (code ${code}).${tail ? ` ${tail}` : ''}`));
+      stt.readyReject = null;
+    }
+    stt.activeNoteId = null;
+    sttBroadcastState();
+  });
+
+  return stt.spawning;
+}
+
+function sttToggle(noteId) {
+  // The note's 🎤 is pure on/off: OFF -> start with the bar's settings
+  // (defaults: auto-detect language, both-side listener); ON -> stop.
+  if (stt.activeNoteId === noteId) {
+    sttStop();
+    return;
+  }
+  return sttStart(noteId, sttSettings.language, sttSettings.listener);
+}
+
+async function sttStart(noteId, language, listener = 'both') {
+  if (!noteWins.has(noteId)) return;
+  if (stt.activeNoteId) sttStop();   // one mic — the previous note stops first
+
+  const python = await sttFindPython();
+  if (!python) {
+    const setupHint = stt.engineDir
+      ? `Run:  python "${path.join(stt.engineDir, 'setup.py')}"\n`
+        + '(If you have several Pythons, set STT_PYTHON to the one with the deps, e.g.  py -3.14 )'
+      : 'The speech engine files could not be staged (writable folder needed beside the app or in AppData).';
+    sttTellNote(noteId, 'stt:error', {
+      kind: 'setup',
+      message: `Dictation needs a one-time setup.\n${setupHint}`,
+    });
+    return;
+  }
+
+  try {
+    await spawnSttEngine();
+  } catch (err) {
+    sttTellNote(noteId, 'stt:error', { kind: 'engine', message: `Speech engine failed: ${err.message}` });
+    return;
+  }
+
+  stt.activeNoteId = noteId;
+  stt.mode = listener === 'mic' ? 'dictation' : 'call';
+  stt.listener = listener;
+  sttWrite({
+    type: 'start',
+    language: language || 'auto',
+    model: sttModelChoice(),
+    mode: stt.mode,
+    // call mode captures only what the listener mode asks for
+    channels: listener === 'mic' ? ['mic'] : listener === 'sys' ? ['sys'] : ['mic', 'sys'],
+  });
+  sttBroadcastState();
+}
+
+function sttStop() {
+  sttWrite({ type: 'stop' });   // engine flushes the last utterance, replies "stopped"
+  stt.activeNoteId = null;
+  sttBroadcastState();
+}
+
+// The note's 🎤 is a pure ON/OFF toggle now — mode/language live on the bar.
+ipcMain.on('stt:pick', (event) => {
+  const { id } = senderNote(event);
+  if (!id) return;
+  sttToggle(id);
+});
+
+ipcMain.handle('stt:status', () => ({
+  running: !!stt.activeNoteId,
+  noteId: stt.activeNoteId,
+  mode: stt.mode || null,
+  listener: stt.listener || null,
+  engineUp: !!(stt.proc && stt.proc.exitCode === null),
+  pythonFound: stt.pythonProbed ? !!stt.pythonCmd : null,
+  model: sttModelChoice(),
+}));
+
+// ---- speaker registry (names, colours, the one definable user) ------------
+
+function broadcastSpeakers() {
+  for (const win of noteWins.values()) {
+    if (!win.isDestroyed()) win.webContents.send('stt:speakers-changed', speakerRegistry);
+  }
+  if (aiWin && !aiWin.isDestroyed()) aiWin.webContents.send('stt:speakers-changed', speakerRegistry);
+}
+
+ipcMain.handle('stt:speakers:get', () => speakerRegistry);
+
+ipcMain.on('stt:speakers:set', (_event, patch) => {
+  if (!patch || typeof patch !== 'object') return;
+  // Route through the same sanitizer used at load: hostile labels, colours
+  // or cue phrases can never reach a note's DOM.
+  speakerRegistry = sanitizeSpeakerRegistry({
+    PU: { ...speakerRegistry.PU, ...(patch.PU || {}) },
+    SU: { ...speakerRegistry.SU, ...(patch.SU || {}) },
+    defined: patch.defined === undefined ? speakerRegistry.defined : patch.defined,
+  });
+  saveSoon();
+  broadcastSpeakers();
+});
+
+// ---- dictation settings (listener mode + language) ------------------------
+// Edited on the AI window's Dictation tab (same navigation pattern as
+// prompts/settings/speakers: tabs + ✕ to close). The bar's 🎙 opens it.
+
+ipcMain.handle('stt:settings:get', () => sttSettings);
+
+ipcMain.on('stt:settings:set', (_event, patch) => {
+  if (!patch || typeof patch !== 'object') return;
+  sttSettings = sanitizeSttSettings({ ...sttSettings, ...patch });
+  saveSoon();
+  if (bar && !bar.isDestroyed()) bar.webContents.send('stt:settings-changed', sttSettings);
+  if (aiWin && !aiWin.isDestroyed()) aiWin.webContents.send('stt:settings-changed', sttSettings);
+});
+
+ipcMain.on('app:open-dict', () => {
+  const alreadyOpen = !!(aiWin && !aiWin.isDestroyed());
+  aiWindow();
+  if (!aiWin || aiWin.isDestroyed()) return;
+  // A freshly created window has not registered its ai:show-page listener
+  // yet — wait for the page, or the tab switch is silently lost.
+  if (alreadyOpen) aiWin.webContents.send('ai:show-page', 'dictation');
+  else aiWin.webContents.once('did-finish-load', () => {
+    if (aiWin && !aiWin.isDestroyed()) aiWin.webContents.send('ai:show-page', 'dictation');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // IPC
@@ -2016,14 +2609,19 @@ ipcMain.on('note:new', (event) => {
 ipcMain.on('resize:start', (event, edge) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || win.isDestroyed()) return;
+  // Garbage here would poison every later resize:move — require a real edge tag.
+  if (typeof edge !== 'string' || !/^[nsew]{1,2}$/.test(edge)) return;
   resizeAnchors.set(win.id, { edge, bounds: win.getBounds() });
 });
 
-ipcMain.on('resize:move', (event, { dx, dy }) => {
+ipcMain.on('resize:move', (event, { dx, dy } = {}) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || win.isDestroyed()) return;
   const anchor = resizeAnchors.get(win.id);
   if (!anchor) return;
+  // NaN/Infinity reach SetWindowPos, which wedges the window (and, with
+  // several notes up, the whole UI) for tens of seconds. Measured — QA 2026-10-27.
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
   const { edge, bounds } = anchor;
   const next = { ...bounds };
 
@@ -2121,7 +2719,11 @@ ipcMain.on('history:clear', async (event) => {
 // ---- images ---------------------------------------------------------------
 
 function newImageFile(ext, data) {
-  const safe = /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase() : 'png';
+  // Only real image extensions: the regex alone would happily bless
+  // 'exe' / 'bat' / 'vbs' / 'ps1' and let a hostile payload plant
+  // executable files in the notes tree (QA 2026-10-27).
+  const exts = new Set(Object.keys(IMAGE_MIME).map((e) => e.slice(1)));
+  const safe = exts.has(String(ext).toLowerCase()) ? String(ext).toLowerCase() : 'png';
   const name = `img-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}.${safe}`;
   const dir = data ? noteImgDir(data) : imagesDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -2133,6 +2735,11 @@ function newImageFile(ext, data) {
 // rewritten on every keystroke.
 ipcMain.handle('image:save', (event, { bytes, ext }) => {
   try {
+    // A string like 'not-an-array' would otherwise be written as file
+    // content via Buffer.from(string); only real byte arrays pass.
+    if (!Array.isArray(bytes) || !bytes.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) {
+      return null;
+    }
     const { data } = senderNote(event);
     const file = newImageFile(ext, data);
     fs.writeFileSync(file, Buffer.from(bytes));
@@ -2315,6 +2922,8 @@ if (!app.requestSingleInstanceLock()) {
     archive = Array.isArray(store.archive) ? store.archive : [];
     aiPrompts = Array.isArray(store.aiPrompts) ? store.aiPrompts : [];
     if (store.aiSettings && typeof store.aiSettings === 'object') aiSettings = { ...aiSettings, ...store.aiSettings };
+    speakerRegistry = sanitizeSpeakerRegistry(store.speakerRegistry);
+    sttSettings = sanitizeSttSettings(store.sttSettings);
     createBar(store.bar, store.barCollapsed);
 
     // Create Notes/history, Notes/saved/<format>, and Notes/Prompt/{soul,skills}
@@ -2384,5 +2993,9 @@ if (!app.requestSingleInstanceLock()) {
   // Flip `quitting` before any window closes, so the per-window 'closed'
   // handlers know not to treat a shutdown as a pile of deletions.
   app.on('before-quit', () => { quitting = true; saveNow(); });
-  app.on('will-quit', () => { globalShortcut.unregisterAll(); saveNow(); });
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+    saveNow();
+    try { if (stt.proc) stt.proc.kill(); } catch (err) { /* ignore */ }
+  });
 }

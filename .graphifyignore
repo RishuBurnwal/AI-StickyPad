@@ -16,6 +16,9 @@ out/
 # User output: the notes you saved and the deleted-note copies. Not product source.
 Notes/
 
+# Speech models: ~150 MB of downloaded binaries. The stt/ code IS indexed.
+stt/models/
+
 # Secrets — never index them
 .env
 .env.example

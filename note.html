@@ -44,12 +44,16 @@
     color: rgba(0, 0, 0, .45);
   }
   #add:hover { background: #2b6ee0; color: #fff; }
-  .grip { flex: 1 1 auto; height: 100%; min-width: 4px; }
+  .grip { flex: 1 1 auto; height: 100%; min-width: 2px; }
   header button {
     -webkit-app-region: no-drag;
-    flex: 0 0 auto;
+    /* One row, always: buttons shrink instead of wrapping or clipping, so
+       every icon (incl. close) stays visible even on the smallest note. */
+    flex: 0 1 auto;
+    min-width: 13px;
     width: 20px;
     height: 20px;
+    overflow: hidden;
     border: 0;
     border-radius: 4px;
     background: transparent;
@@ -63,6 +67,71 @@
   header button:hover { background: rgba(0, 0, 0, .12); color: rgba(0, 0, 0, .85); }
   header button.on { color: #1c60c8; background: rgba(28, 96, 200, .16); }
   header button.danger { color: #fff; background: #d0342c; }
+  /* Drag handle: topmost-right icon — drag it to move the note.
+     app-region is NOT inherited, so the drag must be set here explicitly. */
+  #drag-handle {
+    flex: 0 1 auto;
+    min-width: 14px;
+    width: 18px;
+    height: 20px;
+    overflow: hidden;
+    -webkit-app-region: drag;
+    display: grid;
+    place-items: center;
+    color: rgba(0, 0, 0, .32);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: move;
+    user-select: none;
+    border-radius: 4px;
+  }
+  #drag-handle:hover { color: rgba(0, 0, 0, .7); background: rgba(0, 0, 0, .08); }
+  /* Dictation is a live state, not a toggle like pin — it should breathe. */
+  #mic.on { color: #b3170f; background: rgba(208, 52, 44, .18); animation: pulse 1.1s ease-in-out infinite alternate; }
+
+  /* ---- live dictation strip ---------------------------------------------- */
+  /* An attached FOOTER, not an overlay: it sits below the text inside the
+     note window (body is a flex column, this is the last row), so it never
+     covers what the user typed. */
+  #stt-live {
+    flex: 0 0 auto;
+    margin: 0 8px 6px;
+    display: flex;    align-items: baseline;
+    gap: 7px;
+    padding: 5px 9px;
+    border-radius: 6px;
+    background: rgba(20, 22, 26, .9);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.35;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+  }
+  #stt-dot {
+    flex: 0 0 auto;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #9aa1ab;
+    align-self: center;
+  }
+  #stt-dot.speech { background: #ff5b4d; animation: pulse .55s ease-in-out infinite alternate; }
+  #stt-text { flex: 1 1 auto; min-width: 0; word-break: break-word; opacity: .92; }
+  /* display:flex above would defeat the hidden attribute — keep the strip
+     truly invisible whenever dictation is not running on this note. */
+  #stt-live[hidden] { display: none; }
+
+  /* Speaker labels inside note text (call mode + dictation) */
+  .spk {
+    display: inline-block;
+    padding: 0 5px;
+    margin-right: 5px;
+    border-radius: 4px;
+    color: #fff;
+    font-size: .85em;
+    font-weight: 700;
+    line-height: 1.5;
+    vertical-align: baseline;
+  }
   #bold { font-weight: 800; font-family: Georgia, serif; }
 
   /* ---- popovers -------------------------------------------------------- */
@@ -436,15 +505,22 @@
   .rs.w  { top: 0; left: 0; width: 6px; height: 100%; cursor: ew-resize; }
   .rs.s  { bottom: 0; left: 0; height: 5px; width: 100%; cursor: ns-resize; }
   .rs.n  { top: 0; left: 0; height: 3px; width: 100%; cursor: ns-resize; }
-  .rs.se { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; }
-  .rs.sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
-  .rs.se::after {
-    content: "";
-    position: absolute; right: 3px; bottom: 3px;
-    width: 7px; height: 7px;
-    border-right: 2px solid rgba(0, 0, 0, .32);
-    border-bottom: 2px solid rgba(0, 0, 0, .32);
+  /* Visible drag grip: the corner is now an actual handle you can see and aim for. */
+  .rs.se {
+    bottom: 0; right: 0;
+    width: 20px; height: 20px;
+    cursor: nwse-resize;
+    display: grid;
+    place-items: center;
+    color: rgba(0, 0, 0, .38);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    user-select: none;
   }
+  .rs.se:hover { color: rgba(0, 0, 0, .75); background: rgba(0, 0, 0, .07); border-radius: 5px 0 0 0; }
+  .rs.se::after { content: "⋰"; }
+  .rs.sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
 </style>
 </head>
 <body>
@@ -456,12 +532,14 @@
     <button id="image" title="Add a picture (or just paste one)">🖼</button>
     <button id="colors" title="Note colour">◍</button>
     <button id="timer" title="Add a timer to this note">⏱</button>
+    <button id="mic" title="Dictate into this note (offline Hindi / Hinglish / English)">🎤</button>
     <button id="save" title="Save a copy (PDF, Markdown, JSON, HTML, text)">💾</button>
     <button id="ai" title="AI actions — run a saved prompt on this note">✦</button>
     <button id="undo" title="Undo AI change" disabled>↶</button>
     <button id="redo" title="Redo AI change" disabled>↷</button>
     <button id="pin" title="Keep on top of other windows">📌</button>
     <button id="close" title="Delete note">✕</button>
+    <span id="drag-handle" title="Drag to move this note">⠿</span>
   </header>
 
   <div id="titlebar">
@@ -527,6 +605,11 @@
   </div>
 
   <div id="toast"></div>
+
+  <div id="stt-live" hidden>
+    <span id="stt-dot"></span>
+    <span id="stt-text"></span>
+  </div>
 
   <div class="rs n" data-edge="n"></div>
   <div class="rs w" data-edge="w"></div>
@@ -908,7 +991,15 @@
     try {
       const res = await window.api.invoke('ai:run', { prompt });
       if (!res || !res.ok) {
-        aiStatus((res && res.message) || 'The request failed.', 'err');
+        // Barge-in is the user's own choice (they started talking) — show it
+        // as information, not a red error.
+        if (res && res.kind === 'barge-in') {
+          aiStatus('Interrupted by your voice.', '');
+          return false;
+        }
+        const msg = (res && res.message) || 'The request failed.';
+        aiStatus(msg, 'err');
+        showToast(msg, true);
         return false;
       }
       applyAiResult(res.html, label);
@@ -916,7 +1007,9 @@
       aiStatus(`Done in ${res.latencyMs} ms${extra}. ↶ to undo.`, 'ok');
       return true;
     } catch (err) {
-      aiStatus(err && err.message ? err.message : 'Unexpected error.', 'err');
+      const msg = err && err.message ? err.message : 'Unexpected error.';
+      aiStatus(msg, 'err');
+      showToast(msg, true);
       return false;
     } finally {
       aiBusy = false;
@@ -931,6 +1024,93 @@
     else if (res && res.ok) showToast(`Saved ${res.name}\n${res.dir}`);
     else showToast(`Could not save: ${(res && res.error) || 'unknown error'}`, true);
   });
+
+  // ---- offline dictation (🎤) ----------------------------------------------
+  //
+  // The main process owns the speech engine; this note only renders its
+  // events. Partials show in the ghost strip; a final lands in the editor
+  // via textContent — dictated words can never inject markup.
+  const sttLive = $('stt-live');
+  const sttText = $('stt-text');
+  const sttDot = $('stt-dot');
+
+  function setSttRunning(on) {
+    $('mic').classList.toggle('on', !!on);
+    sttLive.hidden = !on;
+    if (!on) {
+      sttText.textContent = '';
+      sttDot.classList.remove('speech');
+    }
+  }
+
+  $('mic').onclick = () => {
+    closePops();
+    // Pure on/off: mode + language live on the main bar's 🎙 panel.
+    // Tapping here with no settings ever chosen uses the defaults
+    // (auto-detect language, both-side listener).
+    window.api.send('stt:pick');
+  };
+
+  const sttMine = (s) => !!(s && s.running && s.noteId === state.id);
+  window.api.on('stt:state', (s) => setSttRunning(sttMine(s)));
+  // BUG: passing setSttRunning directly fed it the status OBJECT as `on`
+  // (truthy) — the ghost strip showed on every note. Resolve to a boolean.
+  window.api.invoke('stt:status').then((s) => setSttRunning(sttMine(s))).catch(() => { /* engine not up yet */ });
+  window.api.on('stt:vad', (v) => sttDot.classList.toggle('speech', !!(v && v.speech)));
+  window.api.on('stt:progress', (s) => {
+    if (s && s.message && !sttLive.hidden) sttText.textContent = s.message;
+  });
+
+  window.api.on('stt:partial', (p) => {
+    if (sttLive.hidden) return;
+    const who = p && p.speaker ? `${p.speaker.label}: ` : '';
+    sttText.textContent = who + ((p && p.text) || '');
+  });
+
+  window.api.on('stt:final', (p) => {
+    const spoken = ((p && p.text) || '').trim();
+    sttText.textContent = '';
+    if (!spoken) return;
+    pushUndo(text.innerHTML);
+    const div = document.createElement('div');
+    if (p.speaker) {
+      // Speaker label as a keyed span: renaming the speaker later updates
+      // every one of these at once (stt:speakers-changed), never one by one.
+      const lbl = document.createElement('span');
+      lbl.className = 'spk';
+      lbl.dataset.speaker = p.speaker.key;
+      lbl.style.background = p.speaker.color;
+      lbl.textContent = `${p.speaker.label}:`;
+      div.appendChild(lbl);
+      div.appendChild(document.createTextNode(' ' + spoken));
+    } else {
+      div.textContent = spoken;
+    }
+    text.appendChild(div);
+    lastHtml = text.innerHTML;
+    saveBody();
+    showToast(`🎙 ${spoken.length > 44 ? `${spoken.slice(0, 44)}…` : spoken}`);
+  });
+
+  // Rename / recolour propagates: every keyed label in every note updates
+  // from the registry in one pass — no per-instance editing.
+  window.api.on('stt:speakers-changed', (reg) => {
+    if (!reg) return;
+    for (const el of text.querySelectorAll('.spk[data-speaker]')) {
+      const key = el.dataset.speaker;
+      const info = key === 'U1' ? reg.defined : reg[key];
+      if (info) {
+        el.textContent = `${info.label}:`;
+        el.style.background = info.color;
+      }
+    }
+  });
+
+  window.api.on('stt:error', (e) => {
+    setSttRunning(false);
+    showToast((e && e.message) || 'Dictation error.', true);
+  });
+  window.api.on('stt:stopped', () => setSttRunning(false));
 
   function exec(cmd, value) {
     text.focus();
@@ -976,6 +1156,11 @@
     if (e.target.closest('.pop') || e.target.closest('#colors') || e.target.closest('#format')) return;
     if (e.target.closest('#ai-pop') || e.target.closest('#ai')) return;
     closePops();
+  });
+  // BUG-009: Escape closes any open popover / the AI picker. Unsent custom
+  // drafts survive (the box is hidden, not cleared) — same as click-outside.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePops();
   });
 
   // ---- images --------------------------------------------------------------

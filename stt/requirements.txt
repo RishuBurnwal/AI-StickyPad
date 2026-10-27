@@ -1,0 +1,11 @@
+# Offline speech-to-text engine for AI-StickyPad.
+# Install with:  python stt/setup.py        (or)  pip install -r stt/requirements.txt
+#
+# Optional (better noise cleaning, pure Python):
+#   noisereduce
+numpy>=1.24
+faster-whisper>=1.0
+silero-vad>=5.1
+sounddevice>=0.4.6
+# Call mode: WASAPI loopback capture of the speaker output (SU channel).
+soundcard>=0.4.0
