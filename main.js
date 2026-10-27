@@ -71,6 +71,13 @@ function sanitizeSttSettings(raw) {
   if (raw && typeof raw === 'object') {
     if (['mic', 'sys', 'both'].includes(raw.listener)) out.listener = raw.listener;
     if (['auto', 'hi', 'en'].includes(raw.language)) out.language = raw.language;
+    // cached interpreter for the engine (probe fast-path), tightly validated
+    if (Array.isArray(raw.pythonCmd)) {
+      const cmd = raw.pythonCmd
+        .filter((t) => typeof t === 'string' && t.length >= 1 && t.length <= 200 && !/[\r\n\u0000]/.test(t))
+        .slice(0, 4);
+      if (cmd.length) out.pythonCmd = cmd;
+    }
   }
   return out;
 }
@@ -120,6 +127,8 @@ function speakerForChannel(ch, text) {
 // Set once the app is genuinely shutting down. Windows closing during a quit
 // must NOT be treated as the user deleting notes.
 let quitting = false;
+/** The note the user last clicked into — the bar's 🔝 brings this one up. */
+let lastActiveNoteId = null;
 
 // Per-window scratch state for custom edge/corner resizing.
 /** @type {Map<number, {edge: string, bounds: Electron.Rectangle}>} */
@@ -245,18 +254,13 @@ function enforceTop() {
   overlayTop(help);
   overlayTop(historyWin);
   overlayTop(aiWin);
+  // Pinned notes float; UNPINNED notes are normal windows — the user must be
+  // able to put them behind other apps, so they are never raised here.
   if (!notesHidden) {
     for (const [id, win] of noteWins) {
       const d = noteData.get(id);
-      if (!d) continue;
-      // Unpinned notes still must survive Show Desktop; they just don't float.
-      if (d.pinned) reviveIfStolen(win);
-      else {
-        try {
-          if (win.isMinimized()) { try { win.setMinimizable(false); } catch (e) { /* ignore */ } win.restore(); }
-          if (!win.isVisible()) win.showInactive();
-        } catch (err) { /* ignore */ }
-      }
+      if (!d || !d.pinned) continue;
+      reviveIfStolen(win);
     }
   }
 }
@@ -1324,7 +1328,8 @@ function createNote(seed = {}, { focus = false } = {}) {
     title: typeof seed.title === 'string' ? seed.title : '',
     color: PALETTE.includes(seed.color) ? seed.color : PALETTE[0],
     fontSize: Math.min(28, Math.max(11, seed.fontSize || 14)),
-    pinned: seed.pinned !== false,
+    // Normal window by default: only a user-pinned note floats above apps.
+    pinned: seed.pinned === true,
     // Each note owns an independent countdown. `deadline` is an absolute
     // timestamp, so a timer left running survives an app restart.
     timer: seed.timer || {
@@ -1363,7 +1368,9 @@ function createNote(seed = {}, { focus = false } = {}) {
   noteData.set(data.id, data);
 
   if (data.pinned) keepOnTop(win);
-  bindStayVisible(win, () => !quitting && !notesHidden && noteWins.has(data.id));
+  // The Show-Desktop revive is a PINNED-note behaviour; an unpinned note is
+  // a normal window and may be minimized/covered like any other.
+  if (data.pinned) bindStayVisible(win, () => !quitting && !notesHidden && noteWins.has(data.id));
   if (clickThrough) win.setIgnoreMouseEvents(true, { forward: true });
 
   const syncBounds = () => {
@@ -1407,6 +1414,9 @@ function createNote(seed = {}, { focus = false } = {}) {
       win.webContents.send('note:focus-text');
     }
   });
+
+  // Track the note the user last worked in — the bar's 🔝 raises this one.
+  win.on('focus', () => { lastActiveNoteId = data.id; });
 
   saveSoon();
   pushState();
@@ -2152,6 +2162,8 @@ const stt = {
   pythonProbed: false,
   activeNoteId: null,  // the note currently dictating — one mic, one note
   mode: null,          // 'dictation' | 'call'
+  listener: null,      // 'mic' | 'sys' | 'both'
+  starting: false,     // tap seen, engine still probing/loading
   engineFile: null,    // staged engine.py path (set before probing)
   engineDir: null,
   readyWaiters: [],
@@ -2221,7 +2233,10 @@ function sttPythonCandidates() {
   return out;
 }
 
-/** exit 0 from `engine.py --check-runtime` = this interpreter has the deps. */
+/** exit 0 from `engine.py --check-runtime` = this interpreter has the deps.
+ * All candidates are probed IN PARALLEL — on a busy machine a sequential
+ * chain can take minutes, and a slow-but-working interpreter used to be
+ * declared "no setup" (15 s timeout) purely because imports were slow. */
 function sttProbePython(cmd, engineFile) {
   return new Promise((resolve) => {
     let child;
@@ -2231,12 +2246,14 @@ function sttProbePython(cmd, engineFile) {
         windowsHide: true,
       });
     } catch (err) { resolve(false); return; }
+    let settled = false;
+    const finish = (ok) => { if (!settled) { settled = true; clearTimeout(timer); resolve(ok); } };
     const timer = setTimeout(() => {
       try { child.kill(); } catch (err) { /* already gone */ }
-      resolve(false);
-    }, 15000);
-    child.on('error', () => { clearTimeout(timer); resolve(false); });
-    child.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
+      finish(false);
+    }, 60000);   // slow machines: imports alone can take >30 s
+    child.on('error', () => finish(false));
+    child.on('exit', (code) => finish(code === 0));
   });
 }
 
@@ -2250,9 +2267,23 @@ async function sttFindPython() {
   stt.engineFile = path.join(dir, 'engine.py');
   if (stt.pythonProbed) return stt.pythonCmd;
   stt.pythonProbed = true;
-  for (const cmd of sttPythonCandidates()) {
+  // Fast path: the interpreter that worked last time (saved in the store).
+  // Probing every candidate costs 20-60 s on a busy machine — every start.
+  const cached = sttSettings.pythonCmd;
+  if (cached && Array.isArray(cached) && cached.length) {
     // eslint-disable-next-line no-await-in-loop
-    if (await sttProbePython(cmd, stt.engineFile)) { stt.pythonCmd = cmd; break; }
+    if (await sttProbePython(cached, stt.engineFile)) {
+      stt.pythonCmd = cached;
+      return stt.pythonCmd;
+    }
+  }
+  const candidates = sttPythonCandidates();
+  const results = await Promise.all(candidates.map((cmd) => sttProbePython(cmd, stt.engineFile)));
+  const winner = candidates[results.indexOf(true)];
+  if (winner) {
+    stt.pythonCmd = winner;
+    sttSettings.pythonCmd = winner;
+    saveSoon();
   }
   return stt.pythonCmd;
 }
@@ -2274,7 +2305,11 @@ function sttTellNote(noteId, channel, payload) {
 function sttBroadcastState() {
   for (const win of noteWins.values()) {
     if (!win.isDestroyed()) {
-      win.webContents.send('stt:state', { running: !!stt.activeNoteId, noteId: stt.activeNoteId });
+      win.webContents.send('stt:state', {
+        running: !!stt.activeNoteId,
+        noteId: stt.activeNoteId,
+        starting: !!stt.starting,
+      });
     }
   }
 }
@@ -2359,6 +2394,10 @@ function spawnSttEngine() {
     {
       cwd: stt.engineDir,
       windowsHide: true,
+      // Whisper load/transcription saturates the CPU and starves the whole
+      // UI (measured: notes froze for a minute during model load). Below-
+      // normal priority keeps the app responsive while the engine works.
+      ...(process.platform === 'win32' ? { creationflags: 0x4000 } : {}), // BELOW_NORMAL_PRIORITY_CLASS
     });
   stt.proc = child;
   stt.stderrTail = [];
@@ -2425,12 +2464,24 @@ function sttToggle(noteId) {
     sttStop();
     return;
   }
-  return sttStart(noteId, sttSettings.language, sttSettings.listener);
+  sttStop();   // cleanly end any other note's session
+  // IMMEDIATE feedback: probe + model load can take tens of seconds on a
+  // busy machine — the user must see "starting" the moment they tap.
+  stt.activeNoteId = noteId;
+  stt.starting = true;
+  sttTellNote(noteId, 'stt:starting', {});
+  sttBroadcastState();
+  // keepActive: sttStart must not re-stop the state we just armed.
+  return sttStart(noteId, sttSettings.language, sttSettings.listener, true)
+    .catch((err) => {
+      sttTellNote(noteId, 'stt:error', { kind: 'start', message: String(err && err.message || err) });
+    })
+    .finally(() => { stt.starting = false; });
 }
 
-async function sttStart(noteId, language, listener = 'both') {
+async function sttStart(noteId, language, listener = 'both', keepActive = false) {
   if (!noteWins.has(noteId)) return;
-  if (stt.activeNoteId) sttStop();   // one mic — the previous note stops first
+  if (!keepActive && stt.activeNoteId) sttStop();   // one mic — the previous note stops first
 
   const python = await sttFindPython();
   if (!python) {
@@ -2453,6 +2504,7 @@ async function sttStart(noteId, language, listener = 'both') {
   }
 
   stt.activeNoteId = noteId;
+  stt.starting = false;          // engine is listening: solid "on" state now
   stt.mode = listener === 'mic' ? 'dictation' : 'call';
   stt.listener = listener;
   sttWrite({
@@ -2469,6 +2521,7 @@ async function sttStart(noteId, language, listener = 'both') {
 function sttStop() {
   sttWrite({ type: 'stop' });   // engine flushes the last utterance, replies "stopped"
   stt.activeNoteId = null;
+  stt.starting = false;
   sttBroadcastState();
 }
 
@@ -2484,6 +2537,7 @@ ipcMain.handle('stt:status', () => ({
   noteId: stt.activeNoteId,
   mode: stt.mode || null,
   listener: stt.listener || null,
+  starting: !!stt.starting,
   engineUp: !!(stt.proc && stt.proc.exitCode === null),
   pythonFound: stt.pythonProbed ? !!stt.pythonCmd : null,
   model: sttModelChoice(),
@@ -2537,6 +2591,23 @@ ipcMain.on('app:open-dict', () => {
   else aiWin.webContents.once('did-finish-load', () => {
     if (aiWin && !aiWin.isDestroyed()) aiWin.webContents.send('ai:show-page', 'dictation');
   });
+});
+
+// The bar's 🔝: raise the note the user last worked in. ONLY that — it does
+// not pin, focus-steal, or change anything else.
+ipcMain.on('app:raise-active-note', () => {
+  let id = lastActiveNoteId;
+  if (!id || !noteWins.has(id)) {
+    // fall back: the only note, else the newest
+    const ids = [...noteWins.keys()];
+    id = ids.length === 1 ? ids[0] : ids[ids.length - 1];
+  }
+  const win = id ? noteWins.get(id) : null;
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.moveTop();
+  }
 });
 
 // ---------------------------------------------------------------------------

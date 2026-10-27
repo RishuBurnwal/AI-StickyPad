@@ -46,6 +46,7 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import sys
+import threading
 import time
 import wave
 from pathlib import Path
@@ -444,13 +445,42 @@ def stdio_service(model: str = DEFAULT_MODEL) -> int:
         if report_stopped:
             emit({"type": "stopped"})
 
-    # Model load happens before "ready" so the first partial is not slow.
+    # Model load happens before "ready" so the first partial is not slow —
+    # but it must NOT block the stdin loop: while loading, a killed host
+    # (crash, task-kill) would otherwise leave this process running for
+    # minutes as an orphan. Load in a thread; watch stdin here.
     emit({"type": "status", "message": "loading model (first run may download)…"})
-    try:
-        Transcriber(model).load()
-    except Exception as err:
+    load_result = {"error": None}
+
+    def _load() -> None:
+        try:
+            Transcriber(model).load()
+        except Exception as err:
+            load_result["error"] = err
+
+    threading.Thread(target=_load, name="stt-model-load", daemon=True).start()
+    host_gone = threading.Event()
+
+    def _stdin_watch() -> None:
+        for _line in sys.stdin:
+            # commands during load are not actionable; just consume them
+            pass
+        host_gone.set()
+
+    threading.Thread(target=_stdin_watch, name="stt-stdin", daemon=True).start()
+
+    t0 = time.time()
+    while load_result["error"] is None:
+        if host_gone.is_set():
+            log("host went away during model load; exiting")
+            return 0
+        if not any(getattr(t, "name", "") == "stt-model-load" and t.is_alive()
+                   for t in threading.enumerate()):
+            break
+        time.sleep(0.2)
+    if load_result["error"] is not None:
         emit({"type": "error", "kind": "model",
-              "message": f"Model not ready. Run  python stt\\setup.py  first. ({err})"})
+              "message": f"Model not ready. Run  python stt\\setup.py  first. ({load_result['error']})"})
         return 2
     emit({"type": "ready", "model": model, "device": "cpu"})
 

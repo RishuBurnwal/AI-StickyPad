@@ -87,25 +87,27 @@
     border-radius: 4px;
   }
   #drag-handle:hover { color: rgba(0, 0, 0, .7); background: rgba(0, 0, 0, .08); }
-  /* Dictation is a live state, not a toggle like pin — it should breathe. */
-  #mic.on { color: #b3170f; background: rgba(208, 52, 44, .18); animation: pulse 1.1s ease-in-out infinite alternate; }
+  /* Mic states must be unmistakable at a glance:
+     starting = amber pulse, working = SOLID red with a white icon. */
+  #mic.starting { color: #5a3c00; background: #ffb020; animation: pulse .8s ease-in-out infinite alternate; }
+  #mic.on { color: #fff; background: #d0342c; }
 
   /* ---- live dictation strip ---------------------------------------------- */
-  /* An attached FOOTER, not an overlay: it sits below the text inside the
-     note window (body is a flex column, this is the last row), so it never
-     covers what the user typed. */
+  /* An attached FOOTER pinned to the COMPLETE bottom of the note: full width,
+     flush edges (no overflow, no gaps), joined to the note by a subtle
+     invisible border so the two read as separate but connected. */
   #stt-live {
     flex: 0 0 auto;
-    margin: 0 8px 6px;
+    margin: 2px -1px -1px;   /* stretches over the body border: flush bottom */
     display: flex;    align-items: baseline;
     gap: 7px;
-    padding: 5px 9px;
-    border-radius: 6px;
-    background: rgba(20, 22, 26, .9);
+    padding: 6px 10px;
+    border-top: 1px solid rgba(0, 0, 0, .14);   /* the invisible connective */
+    border-radius: 0 0 9px 9px;
+    background: rgba(24, 26, 31, .96);
     color: #fff;
     font-size: 12px;
     line-height: 1.35;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
   }
   #stt-dot {
     flex: 0 0 auto;
@@ -1034,8 +1036,10 @@
   const sttText = $('stt-text');
   const sttDot = $('stt-dot');
 
-  function setSttRunning(on) {
-    $('mic').classList.toggle('on', !!on);
+  function setSttRunning(on, starting) {
+    const mic = $('mic');
+    mic.classList.toggle('on', !!on && !starting);
+    mic.classList.toggle('starting', !!on && !!starting);
     sttLive.hidden = !on;
     if (!on) {
       sttText.textContent = '';
@@ -1052,7 +1056,10 @@
   };
 
   const sttMine = (s) => !!(s && s.running && s.noteId === state.id);
-  window.api.on('stt:state', (s) => setSttRunning(sttMine(s)));
+  window.api.on('stt:state', (s) => setSttRunning(sttMine(s), s && s.starting));
+  // Tap feedback arrives instantly via stt:starting, before the (slow)
+  // interpreter probe / engine spawn / model load even begins.
+  window.api.on('stt:starting', () => setSttRunning(true, true));
   // BUG: passing setSttRunning directly fed it the status OBJECT as `on`
   // (truthy) — the ghost strip showed on every note. Resolve to a boolean.
   window.api.invoke('stt:status').then((s) => setSttRunning(sttMine(s))).catch(() => { /* engine not up yet */ });

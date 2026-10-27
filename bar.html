@@ -95,6 +95,24 @@
 
   #count { color: #7b828c; font-size: 11px; min-width: 44px; }
 
+  /* Drag grip: a visible handle at the bar's right end (app-region drag is
+     NOT inherited - it must be set on the element itself). */
+  #bar-grip {
+    -webkit-app-region: drag;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: move;
+    user-select: none;
+    border-radius: 5px;
+  }
+  #bar-grip:hover { color: #dfe3e8; background: #2e323a; }
+
   /* ---- collapsed handle ---- */
   /* Collapsing shrinks the window itself; this pill is all that is left, so the
      toolbar stays one click away rather than only a remembered hotkey away. */
@@ -162,6 +180,7 @@
     </div>
 
     <button class="btn icon" id="dict" title="Dictation & call settings — opens the AI window's Dictation tab">🎙</button>
+    <button class="btn icon" id="totop" title="Bring your current note to the top (does not pin it)">🔝</button>
     <button class="btn icon" id="ai" title="AI actions (Ctrl+Alt+Y)" style="color:#f2c14e;font-weight:700;font-size:15px">✦</button>
     <span class="spacer"></span>
     <div class="sep"></div>
@@ -169,6 +188,7 @@
     <button class="btn icon" id="collapse" title="Collapse to a small handle">❯</button>
     <button class="btn icon" id="minimise" title="Hide the bar completely (Ctrl+Alt+B brings it back)">−</button>
     <button class="btn icon warn" id="quit" title="Quit AI-StickyPad">✕</button>
+    <span id="bar-grip" title="Drag to move the bar">⠿</span>
   </div>
 
   <button id="pill" title="Show the toolbar">
@@ -200,6 +220,7 @@
   // Defaults: both sides + auto-detect.
   let dictSettings = { listener: 'both', language: 'auto' };
   $('dict').onclick = () => window.api.send('app:open-dict');
+  $('totop').onclick = () => window.api.send('app:raise-active-note');
   window.api.invoke('stt:settings:get').then((s) => { if (s) dictSettings = s; });
 
 
